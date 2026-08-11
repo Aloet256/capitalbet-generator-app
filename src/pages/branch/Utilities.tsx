@@ -1,0 +1,216 @@
+import { useState } from 'react'
+import { Plus, Tv, Lightbulb } from 'lucide-react'
+import { useBranchDevice } from '../../context/BranchDeviceContext'
+import { useDstv } from '../../hooks/useDstv'
+import { useYaka } from '../../hooks/useYaka'
+import { Table } from '../../components/ui/Table'
+import { Modal } from '../../components/ui/Modal'
+import { Input } from '../../components/ui/Input'
+import { CurrencyInput } from '../../components/ui/CurrencyInput'
+import { Textarea } from '../../components/ui/Textarea'
+import { Select } from '../../components/ui/Select'
+import { Button } from '../../components/ui/Button'
+import { DeleteEntryButton } from '../../components/ui/DeleteEntryButton'
+import { Badge } from '../../components/ui/Badge'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { cn, formatDate, formatUGX, daysUntil, toLocalDateInput, parseCurrencyInput } from '../../lib/utils'
+import type { DstvPackage } from '../../types/database'
+
+const DSTV_PACKAGES: DstvPackage[] = ['Access', 'Family', 'Compact', 'Compact Plus', 'Premium']
+
+export default function Utilities() {
+  const { branch } = useBranchDevice()
+  const branchId = branch?.id ?? null
+  const [tab, setTab] = useState<'dstv' | 'yaka'>('dstv')
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Utilities</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">DSTV subscriptions and Yaka (electricity) purchases.</p>
+      </div>
+
+      <div className="flex gap-2 border-b border-slate-200 dark:border-slate-800">
+        <button onClick={() => setTab('dstv')} className={cn('px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-2', tab === 'dstv' ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-500')}>
+          <Tv size={16} /> DSTV
+        </button>
+        <button onClick={() => setTab('yaka')} className={cn('px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-2', tab === 'yaka' ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-500')}>
+          <Lightbulb size={16} /> Yaka
+        </button>
+      </div>
+
+      {tab === 'dstv' ? <DstvTab branchId={branchId} /> : <YakaTab branchId={branchId} />}
+    </div>
+  )
+}
+
+function DstvTab({ branchId }: { branchId: string | null }) {
+  const { subscriptions, addSubscription, deleteSubscription } = useDstv(branchId)
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    subscription_date: toLocalDateInput(),
+    smart_card_number: '',
+    package: 'Compact' as DstvPackage,
+    amount: '',
+    receipt_number: '',
+    remarks: '',
+  })
+
+  const submit = async () => {
+    setError(null)
+    const res = await addSubscription({
+      subscription_date: form.subscription_date,
+      smart_card_number: form.smart_card_number,
+      package: form.package,
+      amount: parseCurrencyInput(form.amount),
+      receipt_number: form.receipt_number || null,
+      remarks: form.remarks || null,
+    })
+    if (res.error) {
+      setError(res.error)
+      return
+    }
+    setOpen(false)
+    setForm({ subscription_date: toLocalDateInput(), smart_card_number: '', package: 'Compact', amount: '', receipt_number: '', remarks: '' })
+  }
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm text-slate-500">Reminder is sent 5 days before renewal (admin configurable).</p>
+        <Button onClick={() => setOpen(true)}>
+          <Plus size={16} /> Add Subscription
+        </Button>
+      </div>
+      {subscriptions.length === 0 ? (
+        <EmptyState title="No DSTV records yet" />
+      ) : (
+        <Table headers={['Subscribed', 'Smart Card', 'Package', 'Amount', 'Renewal', 'Status', 'Receipt', '']}>
+          {subscriptions.map((s) => {
+            const days = daysUntil(s.renewal_date)
+            return (
+              <tr key={s.id}>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.subscription_date)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{s.smart_card_number}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap"><Badge tone="brand">{s.package}</Badge></td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(s.amount)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.renewal_date)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">
+                  {days < 0 ? <Badge tone="red">Overdue</Badge> : days <= 5 ? <Badge tone="amber">Due soon</Badge> : <Badge tone="green">Active</Badge>}
+                </td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{s.receipt_number ?? '—'}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap text-right">
+                  <DeleteEntryButton label="DSTV subscription" onDelete={(password) => deleteSubscription(s.id, password)} />
+                </td>
+              </tr>
+            )
+          })}
+        </Table>
+      )}
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Add DSTV Subscription" wide>
+        <div className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Input label="Subscription Date" type="date" value={form.subscription_date} onChange={(e) => setForm({ ...form, subscription_date: e.target.value })} />
+            <Select label="Package" value={form.package} onChange={(e) => setForm({ ...form, package: e.target.value as DstvPackage })} options={DSTV_PACKAGES.map((p) => ({ value: p, label: p }))} />
+          </div>
+          <Input label="Smart Card Number" value={form.smart_card_number} onChange={(e) => setForm({ ...form, smart_card_number: e.target.value })} />
+          <div className="grid sm:grid-cols-2 gap-4">
+            <CurrencyInput label="Amount (UGX)" min="0" value={form.amount} onValueChange={(amount) => setForm({ ...form, amount })} />
+            <Input label="Receipt Number (optional)" value={form.receipt_number} onChange={(e) => setForm({ ...form, receipt_number: e.target.value })} />
+          </div>
+          <Textarea label="Remarks (optional)" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
+          {error && <p className="text-sm text-red-500">{error}</p>}
+          <Button className="w-full" onClick={submit}>Save Subscription</Button>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+function YakaTab({ branchId }: { branchId: string | null }) {
+  const { purchases, addPurchase, deletePurchase } = useYaka(branchId)
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    purchase_date: toLocalDateInput(),
+    meter_number: '',
+    units: '',
+    amount: '',
+    receipt_number: '',
+    remarks: '',
+  })
+
+  const submit = async () => {
+    setError(null)
+    const res = await addPurchase({
+      purchase_date: form.purchase_date,
+      meter_number: form.meter_number,
+      units: Number(form.units),
+      amount: parseCurrencyInput(form.amount),
+      receipt_number: form.receipt_number || null,
+      remarks: form.remarks || null,
+    })
+    if (res.error) {
+      setError(res.error)
+      return
+    }
+    setOpen(false)
+    setForm({ purchase_date: toLocalDateInput(), meter_number: '', units: '', amount: '', receipt_number: '', remarks: '' })
+  }
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm text-slate-500">Yaka is treated as a monthly load. The system reminds the branch before the next expected reload date.</p>
+        <Button onClick={() => setOpen(true)}>
+          <Plus size={16} /> Add Purchase
+        </Button>
+      </div>
+      {purchases.length === 0 ? (
+        <EmptyState title="No Yaka purchases yet" />
+      ) : (
+        <Table headers={['Date', 'Meter Number', 'Units', 'Amount', 'Next Reload', 'Status', 'Receipt', 'Remarks', '']}>
+          {purchases.map((p) => {
+            const reloadDays = daysUntil(p.expected_reload_date)
+            return (
+              <tr key={p.id}>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(p.purchase_date)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{p.meter_number}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{p.units} kWh</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(p.amount)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(p.expected_reload_date)}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">
+                  {reloadDays < 0 ? <Badge tone="red">Reload overdue</Badge> : reloadDays <= 3 ? <Badge tone="amber">Reload soon</Badge> : <Badge tone="green">Covered</Badge>}
+                </td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">{p.receipt_number ?? '—'}</td>
+                <td className="py-2.5 pr-4 max-w-xs truncate">{p.remarks ?? '—'}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap text-right">
+                  <DeleteEntryButton label="Yaka purchase" onDelete={(password) => deletePurchase(p.id, password)} />
+                </td>
+              </tr>
+            )
+          })}
+        </Table>
+      )}
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Add Yaka Purchase" wide>
+        <div className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Input label="Purchase Date" type="date" value={form.purchase_date} onChange={(e) => setForm({ ...form, purchase_date: e.target.value })} />
+            <Input label="Meter Number" value={form.meter_number} onChange={(e) => setForm({ ...form, meter_number: e.target.value })} />
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Input label="Units (kWh)" type="number" min="0" step="0.1" value={form.units} onChange={(e) => setForm({ ...form, units: e.target.value })} />
+            <CurrencyInput label="Amount (UGX)" min="0" value={form.amount} onValueChange={(amount) => setForm({ ...form, amount })} />
+          </div>
+          <Input label="Receipt Number (optional)" value={form.receipt_number} onChange={(e) => setForm({ ...form, receipt_number: e.target.value })} />
+          <Textarea label="Remarks (optional)" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
+          {error && <p className="text-sm text-red-500">{error}</p>}
+          <Button className="w-full" onClick={submit}>Save Purchase</Button>
+        </div>
+      </Modal>
+    </div>
+  )
+}
