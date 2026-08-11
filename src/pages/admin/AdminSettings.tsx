@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, KeyRound, RotateCcw, SlidersHorizontal, Send, Wrench } from 'lucide-react'
 import { useAdminAuth } from '../../context/AdminAuthContext'
 import { useAppSettings } from '../../hooks/useAppSettings'
@@ -9,8 +9,9 @@ import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
 import { runReminderSweepNow } from '../../lib/telegram'
 import { resetSystemData } from '../../lib/systemReset'
+import { supabase } from '../../lib/supabase'
 import { parseCurrencyInput } from '../../lib/utils'
-import type { AppSettings } from '../../types/database'
+import type { AppSettings, TelegramRegionConfigEntry } from '../../types/database'
 
 export default function AdminSettings() {
   const { admin, changePassword } = useAdminAuth()
@@ -32,10 +33,67 @@ export default function AdminSettings() {
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
   const [resetSuccess, setResetSuccess] = useState(false)
+  const [regions, setRegions] = useState<string[]>([])
+  const [regionLoadError, setRegionLoadError] = useState<string | null>(null)
+  const [branchesMissingRegion, setBranchesMissingRegion] = useState(0)
 
   useEffect(() => {
     if (!settingsLoading) setForm(settings)
   }, [settings, settingsLoading])
+
+  useEffect(() => {
+    let active = true
+    supabase
+      .from('branches')
+      .select('region')
+      .eq('active', true)
+      .order('region', { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) {
+          setRegionLoadError(error.message)
+          return
+        }
+
+        const uniqueRegions = new Set<string>()
+        let missing = 0
+        for (const row of data ?? []) {
+          const region = typeof row.region === 'string' ? row.region.trim() : ''
+          if (region) uniqueRegions.add(region)
+          else missing += 1
+        }
+        setRegions([...uniqueRegions].sort((a, b) => a.localeCompare(b)))
+        setBranchesMissingRegion(missing)
+        setRegionLoadError(null)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const missingTelegramRegions = useMemo(
+    () =>
+      regions.filter((region) => {
+        const config = form.telegram_region_config[region]
+        return !config?.bot_token?.trim() || !config?.chat_id?.trim()
+      }),
+    [form.telegram_region_config, regions]
+  )
+
+  const updateTelegramRegionConfig = (region: string, field: keyof TelegramRegionConfigEntry, value: string) => {
+    const current = form.telegram_region_config[region] ?? { bot_token: '', chat_id: '' }
+    setForm({
+      ...form,
+      telegram_region_config: {
+        ...form.telegram_region_config,
+        [region]: {
+          ...current,
+          [field]: value,
+        },
+      },
+    })
+  }
 
   const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -177,14 +235,50 @@ export default function AdminSettings() {
             onChange={(e) => setForm({ ...form, system_reset_password: e.target.value })}
             placeholder="Required before the admin reset can run"
           />
-          <div className="sm:col-span-2">
-            <Input
-              label="Default Telegram Chat ID"
-              value={form.telegram_default_chat_id}
-              onChange={(e) => setForm({ ...form, telegram_default_chat_id: e.target.value })}
-              placeholder="Used when a branch has no dedicated chat"
-            />
+          <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
+            <div className="flex items-center gap-2">
+              <Send size={16} className="text-brand-600" />
+              <h4 className="font-semibold text-slate-800 dark:text-slate-100">Telegram Configuration by Region</h4>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Branch alerts are sent only to the Telegram group configured for that branch region.</p>
           </div>
+
+          {(regionLoadError || branchesMissingRegion > 0 || missingTelegramRegions.length > 0) && (
+            <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/10 dark:text-amber-300">
+              {regionLoadError && <p>{regionLoadError}</p>}
+              {branchesMissingRegion > 0 && <p>{branchesMissingRegion} branch(es) do not have a region assigned.</p>}
+              {missingTelegramRegions.length > 0 && <p>Missing Telegram configuration for: {missingTelegramRegions.join(', ')}.</p>}
+            </div>
+          )}
+
+          <div className="sm:col-span-2 space-y-3">
+            {regions.length === 0 && !regionLoadError ? (
+              <p className="text-sm text-slate-400">No active branch regions found.</p>
+            ) : (
+              regions.map((region) => {
+                const config = form.telegram_region_config[region] ?? { bot_token: '', chat_id: '' }
+                return (
+                  <div key={region} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                    <h5 className="font-semibold text-slate-800 dark:text-slate-100 mb-3">{region}</h5>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <Input
+                        label="Bot Token"
+                        type="password"
+                        value={config.bot_token}
+                        onChange={(e) => updateTelegramRegionConfig(region, 'bot_token', e.target.value)}
+                      />
+                      <Input
+                        label="Chat ID"
+                        value={config.chat_id}
+                        onChange={(e) => updateTelegramRegionConfig(region, 'chat_id', e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+
           <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
             <div className="flex items-center gap-2">
               <Wrench size={16} className="text-brand-600" />

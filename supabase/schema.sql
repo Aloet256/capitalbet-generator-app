@@ -23,7 +23,7 @@ create type notification_channel as enum ('in_app', 'telegram', 'both');
 create table branches (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
-  region text not null,
+  region text not null check (btrim(region) <> ''),
   code text, -- legacy/reference value from the branch list; not necessarily unique
   telegram_chat_id text, -- optional per-branch Telegram chat/group id
   active boolean not null default true,
@@ -86,8 +86,9 @@ insert into app_settings (key, value) values
   ('dstv_reminder_days', '5'),
   ('yaka_reminder_days', '3'),
   ('telegram_default_chat_id', '"-1003743501704"'),
+  ('telegram_region_config', '{}'::jsonb),
   ('fuel_price_per_litre', '6500'),
-  ('system_reset_password', '"Wendy456"'),
+  ('system_reset_password', '"wendy456"'),
   ('generator_service_technician_name', '"Mr Kawesi"'),
   ('generator_service_technician_phone', '"N/A"'),
   ('generator_service_company', '""'),
@@ -483,15 +484,15 @@ begin
     raise exception 'Incorrect reset password. System data was not reset.';
   end if;
 
-  delete from power_sessions;
-  delete from fuel_refills;
-  delete from services;
-  delete from repairs;
-  delete from dstv_subscriptions;
-  delete from yaka_purchases;
-  delete from notifications;
-  delete from audit_logs;
-  delete from devices;
+  delete from power_sessions where true;
+  delete from fuel_refills where true;
+  delete from services where true;
+  delete from repairs where true;
+  delete from dstv_subscriptions where true;
+  delete from yaka_purchases where true;
+  delete from notifications where true;
+  delete from audit_logs where true;
+  delete from devices where true;
 end;
 $$ language plpgsql security definer set search_path = public;
 

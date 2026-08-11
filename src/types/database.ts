@@ -165,11 +165,19 @@ export interface AuditLog {
   created_at: string
 }
 
+export interface TelegramRegionConfigEntry {
+  bot_token: string
+  chat_id: string
+}
+
+export type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
+
 export interface AppSettings {
   service_reminder_days: number
   dstv_reminder_days: number
   yaka_reminder_days: number
   telegram_default_chat_id: string
+  telegram_region_config: TelegramRegionConfig
   fuel_price_per_litre: number
   branch_delete_password: string
   system_reset_password: string

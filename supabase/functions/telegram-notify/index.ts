@@ -1,13 +1,11 @@
 // Supabase Edge Function: telegram-notify
 // Sends live Telegram messages for records entered in the branch/admin app.
-// Keep TELEGRAM_BOT_TOKEN in Supabase function secrets, never in frontend code.
+// Bot tokens are stored in admin-only app_settings and used only server-side.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? ''
-const TELEGRAM_DEFAULT_CHAT_ID = Deno.env.get('TELEGRAM_DEFAULT_CHAT_ID') ?? '-1003743501704'
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 const corsHeaders = {
@@ -34,6 +32,13 @@ interface NotifyPayload {
   branchId?: string
   details?: Record<string, unknown>
 }
+
+interface TelegramRegionConfigEntry {
+  bot_token?: string
+  chat_id?: string
+}
+
+type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -90,15 +95,59 @@ async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return (data?.value as T) ?? fallback
 }
 
+async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
+  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+}
+
 async function getBranch(branchId?: string) {
   if (!branchId) return null
   const { data, error } = await supabase
     .from('branches')
-    .select('id, name, region, telegram_chat_id')
+    .select('id, name, region')
     .eq('id', branchId)
     .maybeSingle()
   if (error) throw error
   return data
+}
+
+function eventLabel(type: TelegramEventType): string {
+  return type.replaceAll('_', ' ')
+}
+
+async function recordAdminWarning(message: string) {
+  const { error } = await supabase.from('notifications').insert({
+    branch_id: null,
+    type: 'system',
+    channel: 'in_app',
+    title: 'Telegram region not configured',
+    message,
+    telegram_sent: false,
+  })
+  if (error) console.error('Failed to record Telegram configuration warning', error)
+}
+
+async function getRegionDestination(
+  branch: { name: string | null; region: string | null } | null,
+  type: TelegramEventType,
+): Promise<{ botToken: string; chatId: string } | null> {
+  const branchName = branch?.name || 'Unknown branch'
+  const region = branch?.region?.trim() ?? ''
+  if (!region) {
+    await recordAdminWarning(`Telegram skipped for ${eventLabel(type)} because ${branchName} has no region assigned.`)
+    return null
+  }
+
+  const config = await getTelegramRegionConfig()
+  const destination = config[region]
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) {
+    await recordAdminWarning(`Telegram skipped for ${eventLabel(type)} at ${branchName} (${region}). Configure bot token and chat ID for ${region}.`)
+    return null
+  }
+
+  return { botToken, chatId }
 }
 
 async function isAdminToken(token: string): Promise<boolean> {
@@ -227,11 +276,11 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
   }
 }
 
-async function sendTelegram(chatId: string, text: string) {
-  if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is not configured')
+async function sendTelegram(botToken: string, chatId: string, text: string) {
+  if (!botToken) throw new Error('Telegram bot token is not configured')
   if (!chatId) throw new Error('Telegram chat ID is not configured')
 
-  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -263,10 +312,15 @@ Deno.serve(async (req) => {
     }
 
     const branch = await getBranch(payload.branchId)
-    const dbDefaultChat = String(await getSetting('telegram_default_chat_id', ''))
-    const chatId = branch?.telegram_chat_id || dbDefaultChat || TELEGRAM_DEFAULT_CHAT_ID
+    const destination = await getRegionDestination(branch, payload.type)
+    if (!destination) {
+      return new Response(JSON.stringify({ ok: true, skipped: true, reason: 'region_not_configured' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const text = buildMessage(payload, branch)
-    await sendTelegram(chatId, text)
+    await sendTelegram(destination.botToken, destination.chatId, text)
 
     return new Response(JSON.stringify({ ok: true, sent_at: new Date().toISOString() }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

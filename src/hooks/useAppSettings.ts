@@ -3,6 +3,15 @@ import { supabase } from '../lib/supabase'
 import type { AppSettings } from '../types/database'
 import { coerceTextSetting, DEFAULT_APP_SETTINGS } from '../lib/appSettings'
 
+function coerceSettingValue(key: keyof AppSettings, value: unknown): AppSettings[keyof AppSettings] {
+  const defaultValue = DEFAULT_APP_SETTINGS[key]
+  if (typeof defaultValue === 'number') return Number(value)
+  if (defaultValue && typeof defaultValue === 'object' && !Array.isArray(defaultValue)) {
+    return (value && typeof value === 'object' && !Array.isArray(value) ? value : defaultValue) as AppSettings[keyof AppSettings]
+  }
+  return coerceTextSetting(value)
+}
+
 export function useAppSettings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [loading, setLoading] = useState(true)
@@ -19,9 +28,8 @@ export function useAppSettings() {
       for (const row of data) {
         if (row.key in merged) {
           const key = row.key as keyof AppSettings
-          const value = typeof DEFAULT_APP_SETTINGS[key] === 'number' ? Number(row.value) : coerceTextSetting(row.value)
           const writable = merged as Record<keyof AppSettings, unknown>
-          writable[key] = value
+          writable[key] = coerceSettingValue(key, row.value)
         }
       }
       setSettings(merged)

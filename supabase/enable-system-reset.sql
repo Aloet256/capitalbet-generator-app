@@ -1,8 +1,8 @@
 -- Run this once in the Supabase SQL Editor to enable Admin Settings -> Reset System Data.
--- Default reset password: Wendy456. Change it later from Admin Settings if needed.
+-- Default reset password: wendy456. Change it later from Admin Settings if needed.
 
 insert into app_settings (key, value)
-values ('system_reset_password', '"Wendy456"')
+values ('system_reset_password', '"wendy456"')
 on conflict (key) do nothing;
 
 create or replace function fn_reset_system_data(p_password text)
@@ -22,15 +22,15 @@ begin
     raise exception 'Incorrect reset password. System data was not reset.';
   end if;
 
-  delete from power_sessions;
-  delete from fuel_refills;
-  delete from services;
-  delete from repairs;
-  delete from dstv_subscriptions;
-  delete from yaka_purchases;
-  delete from notifications;
-  delete from audit_logs;
-  delete from devices;
+  delete from power_sessions where true;
+  delete from fuel_refills where true;
+  delete from services where true;
+  delete from repairs where true;
+  delete from dstv_subscriptions where true;
+  delete from yaka_purchases where true;
+  delete from notifications where true;
+  delete from audit_logs where true;
+  delete from devices where true;
 end;
 $$ language plpgsql security definer set search_path = public;
 

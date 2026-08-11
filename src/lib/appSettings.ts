@@ -24,9 +24,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   dstv_reminder_days: 5,
   yaka_reminder_days: 3,
   telegram_default_chat_id: '',
+  telegram_region_config: {},
   fuel_price_per_litre: 6500,
   branch_delete_password: '',
-  system_reset_password: 'Wendy456',
+  system_reset_password: 'wendy456',
   ...DEFAULT_SERVICE_SETTINGS,
 }
 

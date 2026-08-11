@@ -7,8 +7,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? ''
-const TELEGRAM_DEFAULT_CHAT_ID = Deno.env.get('TELEGRAM_DEFAULT_CHAT_ID') ?? '-1003743501704'
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 const corsHeaders = {
@@ -16,6 +14,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
+
+interface TelegramRegionConfigEntry {
+  bot_token?: string
+  chat_id?: string
+}
+
+type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -63,6 +68,11 @@ async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return (data?.value as T) ?? fallback
 }
 
+async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
+  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+}
+
 async function isAuthorized(req: Request): Promise<boolean> {
   const header = req.headers.get('Authorization') ?? ''
   const token = header.replace(/^Bearer\s+/i, '').trim()
@@ -79,10 +89,45 @@ async function isAuthorized(req: Request): Promise<boolean> {
   return Boolean(admin)
 }
 
-async function sendTelegram(chatId: string, text: string): Promise<boolean> {
-  if (!chatId || !TELEGRAM_BOT_TOKEN) return false
+async function recordAdminWarning(message: string) {
+  const { error } = await supabase.from('notifications').insert({
+    branch_id: null,
+    type: 'system',
+    channel: 'in_app',
+    title: 'Telegram region not configured',
+    message,
+    telegram_sent: false,
+  })
+  if (error) console.error('Failed to record Telegram configuration warning', error)
+}
 
-  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+async function getRegionDestination(
+  branch: { name?: string | null; region?: string | null } | null,
+  reminderType: string,
+): Promise<{ botToken: string; chatId: string } | null> {
+  const branchName = branch?.name || 'Unknown branch'
+  const region = branch?.region?.trim() ?? ''
+  if (!region) {
+    await recordAdminWarning(`Telegram skipped for ${reminderType} because ${branchName} has no region assigned.`)
+    return null
+  }
+
+  const config = await getTelegramRegionConfig()
+  const destination = config[region]
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) {
+    await recordAdminWarning(`Telegram skipped for ${reminderType} at ${branchName} (${region}). Configure bot token and chat ID for ${region}.`)
+    return null
+  }
+
+  return { botToken, chatId }
+}
+
+async function sendTelegram(botToken: string, chatId: string, text: string): Promise<boolean> {
+  if (!chatId || !botToken) return false
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
@@ -132,11 +177,10 @@ Deno.serve(async (req) => {
   const serviceDays = Number(await getSetting('service_reminder_days', 5))
   const dstvDays = Number(await getSetting('dstv_reminder_days', 5))
   const yakaDays = Number(await getSetting('yaka_reminder_days', 3))
-  const defaultChat = String(await getSetting('telegram_default_chat_id', TELEGRAM_DEFAULT_CHAT_ID))
 
   const { data: dueServices, error: serviceError } = await supabase
     .from('services')
-    .select('id, branch_id, next_service_date, reminder_sent, branches(name, telegram_chat_id, active)')
+    .select('id, branch_id, next_service_date, reminder_sent, branches(name, region, active)')
     .eq('reminder_sent', false)
     .lte('next_service_date', addDays(serviceDays))
 
@@ -144,11 +188,12 @@ Deno.serve(async (req) => {
   for (const s of dueServices ?? []) {
     if ((s as any).branches?.active === false) continue
     const branchName = (s as any).branches?.name ?? 'Branch'
-    const chatId = (s as any).branches?.telegram_chat_id || defaultChat
+    const destination = await getRegionDestination((s as any).branches ?? null, 'generator service reminder')
     let telegramSent = false
     try {
-      telegramSent = await sendTelegram(
-        chatId,
+      if (destination) telegramSent = await sendTelegram(
+        destination.botToken,
+        destination.chatId,
         telegramMessage('GENERATOR SERVICE REMINDER', '🔧', [
           detailLine('🏢', 'Branch', branchName),
           detailLine('📅', 'Due date', s.next_service_date),
@@ -173,7 +218,7 @@ Deno.serve(async (req) => {
 
   const { data: dueDstv, error: dstvError } = await supabase
     .from('dstv_subscriptions')
-    .select('id, branch_id, renewal_date, package, reminder_sent, branches(name, telegram_chat_id, active)')
+    .select('id, branch_id, renewal_date, package, reminder_sent, branches(name, region, active)')
     .eq('reminder_sent', false)
     .lte('renewal_date', addDays(dstvDays))
 
@@ -181,11 +226,12 @@ Deno.serve(async (req) => {
   for (const d of dueDstv ?? []) {
     if ((d as any).branches?.active === false) continue
     const branchName = (d as any).branches?.name ?? 'Branch'
-    const chatId = (d as any).branches?.telegram_chat_id || defaultChat
+    const destination = await getRegionDestination((d as any).branches ?? null, 'DSTV renewal reminder')
     let telegramSent = false
     try {
-      telegramSent = await sendTelegram(
-        chatId,
+      if (destination) telegramSent = await sendTelegram(
+        destination.botToken,
+        destination.chatId,
         telegramMessage('DSTV RENEWAL REMINDER', '📺', [
           detailLine('🏢', 'Branch', branchName),
           detailLine('📦', 'Package', (d as any).package),
@@ -211,7 +257,7 @@ Deno.serve(async (req) => {
 
   const { data: branches, error: branchError } = await supabase
     .from('branches')
-    .select('id, name, telegram_chat_id')
+    .select('id, name, region')
     .eq('active', true)
   if (branchError) throw branchError
 
@@ -227,11 +273,12 @@ Deno.serve(async (req) => {
     if (yakaError) throw yakaError
     if (!latest || latest.reminder_sent || latest.expected_reload_date > addDays(yakaDays)) continue
 
-    const chatId = branch.telegram_chat_id || defaultChat
+    const destination = await getRegionDestination(branch, 'Yaka reload reminder')
     let telegramSent = false
     try {
-      telegramSent = await sendTelegram(
-        chatId,
+      if (destination) telegramSent = await sendTelegram(
+        destination.botToken,
+        destination.chatId,
         telegramMessage('YAKA RELOAD REMINDER', '⚡', [
           detailLine('🏢', 'Branch', branch.name),
           detailLine('📅', 'Expected reload', latest.expected_reload_date),

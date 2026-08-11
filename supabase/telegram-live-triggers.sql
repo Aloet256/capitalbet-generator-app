@@ -1,6 +1,7 @@
--- CapitalBet live Telegram messages.
--- Run this once in Supabase SQL Editor.
--- Replace PASTE_BOT_TOKEN_HERE with your Telegram bot token before running.
+-- Deprecated: legacy database-trigger Telegram messages.
+-- Prefer Supabase Edge Functions, which route messages by branch region.
+-- If you still run this legacy script, replace PASTE_BOT_TOKEN_HERE and
+-- PASTE_CHAT_ID_HERE before running. Do not commit real bot tokens.
 
 create extension if not exists pg_net;
 
@@ -36,9 +37,9 @@ begin
     case when nullif(v_body, '') is null then '' else E'\n\n' || v_body end;
 
   perform net.http_post(
-    url := 'https://api.telegram.org/bot8878810134:AAHIL1jmRsJV4_fuIJm_CSj89VJDye7y41Q/sendMessage',
+    url := 'https://api.telegram.org/botPASTE_BOT_TOKEN_HERE/sendMessage',
     body := jsonb_build_object(
-      'chat_id', '-1003743501704',
+      'chat_id', 'PASTE_CHAT_ID_HERE',
       'text', v_formatted,
       'parse_mode', 'HTML',
       'disable_web_page_preview', true

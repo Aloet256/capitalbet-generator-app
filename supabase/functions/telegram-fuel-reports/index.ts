@@ -7,8 +7,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') ?? ''
-const TELEGRAM_DEFAULT_CHAT_ID = Deno.env.get('TELEGRAM_DEFAULT_CHAT_ID') ?? '-1003743501704'
 const FUEL_REPORT_CRON_SECRET = Deno.env.get('FUEL_REPORT_CRON_SECRET') ?? ''
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
@@ -31,6 +29,13 @@ interface FuelRow {
   litres: number | string
   cost: number | string
 }
+
+interface TelegramRegionConfigEntry {
+  bot_token?: string
+  chat_id?: string
+}
+
+type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -155,6 +160,11 @@ async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return (data?.value as T) ?? fallback
 }
 
+async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
+  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+}
+
 async function isAuthorized(req: Request): Promise<boolean> {
   const cronSecret = req.headers.get('x-cron-secret') ?? ''
   if (FUEL_REPORT_CRON_SECRET && cronSecret === FUEL_REPORT_CRON_SECRET) return true
@@ -170,11 +180,42 @@ async function isAuthorized(req: Request): Promise<boolean> {
   return Boolean(admin)
 }
 
-async function sendTelegram(chatId: string, text: string) {
-  if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is not configured')
+async function recordAdminWarning(message: string) {
+  const { error } = await supabase.from('notifications').insert({
+    branch_id: null,
+    type: 'system',
+    channel: 'in_app',
+    title: 'Telegram region not configured',
+    message,
+    telegram_sent: false,
+  })
+  if (error) console.error('Failed to record Telegram configuration warning', error)
+}
+
+async function getRegionDestination(region: string): Promise<{ botToken: string; chatId: string } | null> {
+  const cleanRegion = region.trim()
+  if (!cleanRegion) {
+    await recordAdminWarning('Telegram fuel report skipped because one or more branches have no region assigned.')
+    return null
+  }
+
+  const config = await getTelegramRegionConfig()
+  const destination = config[cleanRegion]
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) {
+    await recordAdminWarning(`Telegram fuel report skipped for ${cleanRegion}. Configure bot token and chat ID for ${cleanRegion}.`)
+    return null
+  }
+
+  return { botToken, chatId }
+}
+
+async function sendTelegram(botToken: string, chatId: string, text: string) {
+  if (!botToken) throw new Error('Telegram bot token is not configured')
   if (!chatId) throw new Error('Telegram chat ID is not configured')
 
-  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
@@ -205,7 +246,9 @@ function chunkReport(header: string, lines: string[]): string[] {
 }
 
 async function buildAndSendReport(args: {
+  botToken: string
   chatId: string
+  region: string
   branches: BranchRow[]
   title: string
   label: string
@@ -220,8 +263,10 @@ async function buildAndSendReport(args: {
 
   if (error) throw error
 
+  const branchIds = new Set(args.branches.map((branch) => branch.id))
   const totals = new Map<string, { litres: number; cost: number; records: number }>()
   for (const row of ((data as FuelRow[] | null) ?? [])) {
+    if (!branchIds.has(row.branch_id)) continue
     const current = totals.get(row.branch_id) ?? { litres: 0, cost: 0, records: 0 }
     current.litres += numberValue(row.litres)
     current.cost += numberValue(row.cost)
@@ -240,6 +285,7 @@ async function buildAndSendReport(args: {
 
   const header = [
     `<b>${escapeHtml(args.title)}</b>`,
+    `<b>Region:</b> ${escapeHtml(args.region)}`,
     `<b>Period:</b> ${escapeHtml(args.label)}`,
     `<b>Total:</b> ${money(overall.cost)} / ${litres(overall.litres)} / ${overall.records} refill(s)`,
     '',
@@ -252,7 +298,7 @@ async function buildAndSendReport(args: {
   })
 
   for (const message of chunkReport(header, lines)) {
-    await sendTelegram(args.chatId, message)
+    await sendTelegram(args.botToken, args.chatId, message)
   }
 
   return { cost: overall.cost, litres: overall.litres, records: overall.records }
@@ -273,7 +319,6 @@ Deno.serve(async (req) => {
   const todayKey = typeof body.date === 'string' ? body.date : dateOnlyKampala(new Date())
   if (!['auto', 'daily', 'weekly', 'monthly'].includes(mode)) throw new Error('Invalid report mode')
 
-  const defaultChat = String(await getSetting('telegram_default_chat_id', TELEGRAM_DEFAULT_CHAT_ID))
   const { data: branches, error: branchError } = await supabase
     .from('branches')
     .select('id, name, region')
@@ -283,16 +328,33 @@ Deno.serve(async (req) => {
 
   if (branchError) throw branchError
 
-  const results: Record<string, { cost: number; litres: number; records: number }> = {}
+  const branchesByRegion = new Map<string, BranchRow[]>()
+  for (const branch of ((branches as BranchRow[] | null) ?? [])) {
+    const region = branch.region.trim()
+    branchesByRegion.set(region, [...(branchesByRegion.get(region) ?? []), branch])
+  }
+
+  const results: Record<string, Record<string, unknown>> = {}
   for (const range of reportRanges(mode, todayKey)) {
-    results[range.key] = await buildAndSendReport({
-      chatId: defaultChat,
-      branches: (branches as BranchRow[] | null) ?? [],
-      title: range.title,
-      label: range.label,
-      start: range.start,
-      end: range.end,
-    })
+    results[range.key] = {}
+    for (const [region, regionBranches] of branchesByRegion.entries()) {
+      const destination = await getRegionDestination(region)
+      if (!destination) {
+        results[range.key][region || 'Unassigned Region'] = { skipped: true, reason: 'region_not_configured' }
+        continue
+      }
+
+      results[range.key][region] = await buildAndSendReport({
+        botToken: destination.botToken,
+        chatId: destination.chatId,
+        region,
+        branches: regionBranches,
+        title: range.title,
+        label: range.label,
+        start: range.start,
+        end: range.end,
+      })
+    }
   }
 
   return new Response(JSON.stringify({ ok: true, mode, date: todayKey, results, sent_at: new Date().toISOString() }), {
