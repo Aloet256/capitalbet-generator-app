@@ -3,6 +3,7 @@ import { getDeviceFingerprint } from './device'
 
 const url = import.meta.env.VITE_SUPABASE_URL
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const AUTH_STORAGE_KEY = 'cb_supabase_auth'
 
 function isAsciiHeaderValue(value: string) {
   return /^[\x20-\x7E]*$/.test(value)
@@ -13,7 +14,8 @@ function sanitizeSupabaseAuthStorage() {
 
   for (let index = localStorage.length - 1; index >= 0; index -= 1) {
     const key = localStorage.key(index)
-    if (!key?.startsWith('sb-') || !key.endsWith('-auth-token')) continue
+    const isSupabaseDefaultAuthKey = key?.startsWith('sb-') && key.endsWith('-auth-token')
+    if (!key || (key !== AUTH_STORAGE_KEY && !isSupabaseDefaultAuthKey)) continue
 
     const raw = localStorage.getItem(key)
     if (!raw) {
@@ -54,6 +56,7 @@ export const supabase = createClient(url ?? '', anonKey ?? '', {
     },
   },
   auth: {
+    storageKey: AUTH_STORAGE_KEY,
     persistSession: true,
     autoRefreshToken: true,
   },
