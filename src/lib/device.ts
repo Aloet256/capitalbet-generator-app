@@ -14,6 +14,7 @@
 
 const FINGERPRINT_KEY = 'cb_device_fingerprint'
 const LOCKED_BRANCH_KEY = 'cb_locked_branch_id'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -27,9 +28,13 @@ function uuid(): string {
   })
 }
 
+function isSafeFingerprint(value: string | null): value is string {
+  return Boolean(value && UUID_RE.test(value))
+}
+
 export function getDeviceFingerprint(): string {
   let fp = localStorage.getItem(FINGERPRINT_KEY)
-  if (!fp) {
+  if (!isSafeFingerprint(fp)) {
     fp = uuid()
     localStorage.setItem(FINGERPRINT_KEY, fp)
   }
