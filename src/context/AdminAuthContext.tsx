@@ -12,11 +12,16 @@ interface AdminAuthCtx {
 }
 
 const Ctx = createContext<AdminAuthCtx | undefined>(undefined)
-const adminUsername = import.meta.env.VITE_ADMIN_USERNAME ?? 'admin'
-const adminEmail = import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@capitalbet.example'
+
+function cleanLoginValue(value: string) {
+  return value.replace(/\\uFEFF/gi, '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
+}
+
+const adminUsername = cleanLoginValue(import.meta.env.VITE_ADMIN_USERNAME ?? 'admin')
+const adminEmail = cleanLoginValue(import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@capitalbet.example')
 
 function resolveAdminEmail(login: string) {
-  const trimmed = login.trim()
+  const trimmed = cleanLoginValue(login)
   return trimmed.toLowerCase() === adminUsername.toLowerCase() ? adminEmail : trimmed
 }
 
