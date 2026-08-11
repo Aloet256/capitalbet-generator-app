@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { recoverFromInvalidHeaderError, supabase } from '../lib/supabase'
 import type { Branch } from '../types/database'
 
 export interface BranchWithAvailability extends Pick<Branch, 'id' | 'name' | 'region' | 'code'> {
@@ -21,6 +21,7 @@ export function useBranches() {
       .then(({ data, error: queryError }) => {
         if (!active) return
         if (queryError) {
+          if (recoverFromInvalidHeaderError(queryError)) return
           setError(queryError.message)
           setBranches([])
         } else {

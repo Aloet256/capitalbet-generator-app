@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { supabase } from '../lib/supabase'
+import { recoverFromInvalidHeaderError, supabase } from '../lib/supabase'
 import { describeDevice, getDeviceFingerprint, getLockedBranchId, setLockedBranchId } from '../lib/device'
 import { notifyTelegramEntry } from '../lib/telegram'
 import type { Branch, DeviceStatus } from '../types/database'
@@ -33,6 +33,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       .maybeSingle()
 
     if (deviceError) {
+      if (recoverFromInvalidHeaderError(deviceError)) return
       console.error('refreshStatus device lookup failed', deviceError)
     }
 
@@ -98,6 +99,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
         .maybeSingle()
 
       if (existingError) {
+        if (recoverFromInvalidHeaderError(existingError)) return {}
         setLoading(false)
         return { error: existingError.message }
       }
@@ -123,6 +125,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       })
 
       if (error) {
+        if (recoverFromInvalidHeaderError(error)) return {}
         await refreshStatus(true)
         if (error.code === '23505') {
           return { error: 'That branch is already assigned to another computer. Choose an available branch.' }

@@ -4,6 +4,7 @@ import { getDeviceFingerprint } from './device'
 const url = import.meta.env.VITE_SUPABASE_URL
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const AUTH_STORAGE_KEY = 'cb_supabase_auth'
+const INVALID_HEADER_RECOVERY_KEY = 'cb_invalid_header_recovery_attempted'
 
 function isAsciiHeaderValue(value: string) {
   return /^[\x20-\x7E]*$/.test(value)
@@ -34,6 +35,39 @@ function sanitizeSupabaseAuthStorage() {
       localStorage.removeItem(key)
     }
   }
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error) return String((error as { message?: unknown }).message ?? '')
+  return String(error ?? '')
+}
+
+function clearAppBrowserStorage() {
+  if (typeof localStorage === 'undefined') return
+
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index)
+    if (!key) continue
+    const isSupabaseAuthKey = key.startsWith('sb-') && key.endsWith('-auth-token')
+    if (key.startsWith('cb_') || isSupabaseAuthKey || key === 'supabase.auth.token') {
+      localStorage.removeItem(key)
+    }
+  }
+}
+
+export function recoverFromInvalidHeaderError(error: unknown) {
+  const message = errorMessage(error)
+  const isInvalidHeader =
+    message.includes('non ISO-8859-1') || (message.includes("Failed to execute 'set' on 'Headers'") && message.includes('Headers'))
+
+  if (!isInvalidHeader || typeof sessionStorage === 'undefined' || typeof window === 'undefined') return false
+  if (sessionStorage.getItem(INVALID_HEADER_RECOVERY_KEY) === '1') return false
+
+  sessionStorage.setItem(INVALID_HEADER_RECOVERY_KEY, '1')
+  clearAppBrowserStorage()
+  window.location.reload()
+  return true
 }
 
 if (!url || !anonKey) {
