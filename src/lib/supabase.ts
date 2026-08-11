@@ -6,6 +6,11 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const AUTH_STORAGE_KEY = 'cb_supabase_auth'
 const INVALID_HEADER_RECOVERY_KEY = 'cb_invalid_header_recovery_attempted'
 
+type CapitalBetGlobal = typeof globalThis & {
+  __capitalbetFetchGuard?: boolean
+  fetch: typeof fetch
+}
+
 function isAsciiHeaderValue(value: string) {
   return /^[\x20-\x7E]*$/.test(value)
 }
@@ -14,37 +19,63 @@ function asciiHeaderValue(value: unknown) {
   return String(value ?? '').replace(/[^\x20-\x7E]/g, '')
 }
 
+function sanitizeHeadersInit(headers: HeadersInit): HeadersInit {
+  if (headers instanceof Headers) {
+    const safe = new Headers()
+    headers.forEach((value, key) => safe.set(key, asciiHeaderValue(value)))
+    return safe
+  }
+
+  if (Array.isArray(headers)) {
+    return headers.map(([key, value]) => [key, asciiHeaderValue(value)] as [string, string])
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers as Record<string, unknown>).map(([key, value]) => [key, asciiHeaderValue(value)]),
+  )
+}
+
 function installHeaderValueGuard() {
-  if (typeof Headers === 'undefined') return
+  if (typeof Headers === 'undefined' || typeof fetch === 'undefined') return
   const proto = Headers.prototype as Headers & { __capitalbetHeaderGuard?: boolean }
-  if (proto.__capitalbetHeaderGuard) return
+  const guardedGlobal = globalThis as CapitalBetGlobal
 
-  const originalSet = Headers.prototype.set
-  const originalAppend = Headers.prototype.append
+  if (!proto.__capitalbetHeaderGuard) {
+    const originalSet = Headers.prototype.set
+    const originalAppend = Headers.prototype.append
 
-  Headers.prototype.set = function set(name: string, value: string) {
-    try {
-      return originalSet.call(this, name, value)
-    } catch (error) {
-      if (errorMessage(error).includes('non ISO-8859-1')) {
-        return originalSet.call(this, name, asciiHeaderValue(value))
+    Headers.prototype.set = function set(name: string, value: string) {
+      try {
+        return originalSet.call(this, name, value)
+      } catch (error) {
+        if (errorMessage(error).includes('non ISO-8859-1')) {
+          return originalSet.call(this, name, asciiHeaderValue(value))
+        }
+        throw error
       }
-      throw error
     }
+
+    Headers.prototype.append = function append(name: string, value: string) {
+      try {
+        return originalAppend.call(this, name, value)
+      } catch (error) {
+        if (errorMessage(error).includes('non ISO-8859-1')) {
+          return originalAppend.call(this, name, asciiHeaderValue(value))
+        }
+        throw error
+      }
+    }
+
+    proto.__capitalbetHeaderGuard = true
   }
 
-  Headers.prototype.append = function append(name: string, value: string) {
-    try {
-      return originalAppend.call(this, name, value)
-    } catch (error) {
-      if (errorMessage(error).includes('non ISO-8859-1')) {
-        return originalAppend.call(this, name, asciiHeaderValue(value))
-      }
-      throw error
-    }
+  if (guardedGlobal.__capitalbetFetchGuard) return
+  const originalFetch = guardedGlobal.fetch.bind(globalThis)
+  guardedGlobal.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const safeInit = init?.headers ? { ...init, headers: sanitizeHeadersInit(init.headers) } : init
+    return originalFetch(input, safeInit)
   }
-
-  proto.__capitalbetHeaderGuard = true
+  guardedGlobal.__capitalbetFetchGuard = true
 }
 
 function sanitizeSupabaseAuthStorage() {
