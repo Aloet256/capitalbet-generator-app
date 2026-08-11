@@ -49,6 +49,10 @@ export function setLockedBranchId(branchId: string) {
   localStorage.setItem(LOCKED_BRANCH_KEY, branchId)
 }
 
+export function clearLockedBranchId() {
+  localStorage.removeItem(LOCKED_BRANCH_KEY)
+}
+
 
 export function describeDevice(): string {
   const ua = navigator.userAgent

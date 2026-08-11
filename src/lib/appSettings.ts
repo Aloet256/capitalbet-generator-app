@@ -26,6 +26,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   telegram_default_chat_id: '',
   fuel_price_per_litre: 6500,
   branch_delete_password: '',
+  system_reset_password: 'Wendy456',
   ...DEFAULT_SERVICE_SETTINGS,
 }
 

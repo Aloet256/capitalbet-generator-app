@@ -87,6 +87,7 @@ insert into app_settings (key, value) values
   ('yaka_reminder_days', '3'),
   ('telegram_default_chat_id', '"-1003743501704"'),
   ('fuel_price_per_litre', '6500'),
+  ('system_reset_password', '"Wendy456"'),
   ('generator_service_technician_name', '"Mr Kawesi"'),
   ('generator_service_technician_phone', '"N/A"'),
   ('generator_service_company', '""'),
@@ -464,6 +465,37 @@ end;
 $$ language plpgsql security definer set search_path = public;
 
 grant execute on function fn_delete_branch_entry(text, uuid, text) to anon, authenticated;
+
+create or replace function fn_reset_system_data(p_password text)
+returns void as $$
+declare
+  v_reset_password text;
+begin
+  if not fn_is_admin() then
+    raise exception 'Only an authenticated admin can reset system data.';
+  end if;
+
+  select value #>> '{}' into v_reset_password
+  from app_settings
+  where key = 'system_reset_password';
+
+  if coalesce(v_reset_password, '') = '' or coalesce(p_password, '') <> v_reset_password then
+    raise exception 'Incorrect reset password. System data was not reset.';
+  end if;
+
+  delete from power_sessions;
+  delete from fuel_refills;
+  delete from services;
+  delete from repairs;
+  delete from dstv_subscriptions;
+  delete from yaka_purchases;
+  delete from notifications;
+  delete from audit_logs;
+  delete from devices;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+grant execute on function fn_reset_system_data(text) to authenticated;
 
 -- A computer's branch_id is immutable after the device row is created. An
 -- admin can revoke access to free the branch for a replacement computer, but

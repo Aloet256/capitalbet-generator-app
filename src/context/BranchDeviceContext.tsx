@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { recoverFromInvalidHeaderError, supabase } from '../lib/supabase'
-import { describeDevice, getDeviceFingerprint, getLockedBranchId, setLockedBranchId } from '../lib/device'
+import { clearLockedBranchId, describeDevice, getDeviceFingerprint, getLockedBranchId, setLockedBranchId } from '../lib/device'
 import { notifyTelegramEntry } from '../lib/telegram'
 import type { Branch, DeviceStatus } from '../types/database'
 
@@ -35,6 +35,8 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
     if (deviceError) {
       if (recoverFromInvalidHeaderError(deviceError)) return
       console.error('refreshStatus device lookup failed', deviceError)
+      setLoading(false)
+      return
     }
 
     if (device) {
@@ -53,29 +55,9 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    // A local lock may exist between the first click and a successful insert.
-    // Preserve that branch so the user can retry only the same assignment.
-    const lockedId = getLockedBranchId()
-    if (lockedId) {
-      const { data: branchRows } = await supabase.rpc('get_branch_selection_list')
-      const row = (branchRows ?? []).find((item: any) => item.branch_id === lockedId)
-      setBranch(
-        row
-          ? ({
-              id: row.branch_id,
-              name: row.name,
-              region: row.region,
-              code: row.code ?? null,
-              telegram_chat_id: null,
-              active: true,
-              created_at: '',
-            } as Branch)
-          : null
-      )
-      setDeviceStatus(null)
-      setLoading(false)
-      return
-    }
+    // The server-side device row is authoritative. If it is gone after an
+    // admin reset, clear the stale local lock so this browser starts fresh.
+    if (getLockedBranchId()) clearLockedBranchId()
 
     setBranch(null)
     setDeviceStatus(null)

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, SlidersHorizontal, Send, Wrench } from 'lucide-react'
+import { AlertTriangle, KeyRound, RotateCcw, SlidersHorizontal, Send, Wrench } from 'lucide-react'
 import { useAdminAuth } from '../../context/AdminAuthContext'
 import { useAppSettings } from '../../hooks/useAppSettings'
 import { Input } from '../../components/ui/Input'
 import { CurrencyInput } from '../../components/ui/CurrencyInput'
 import { Textarea } from '../../components/ui/Textarea'
 import { Button } from '../../components/ui/Button'
+import { Modal } from '../../components/ui/Modal'
 import { runReminderSweepNow } from '../../lib/telegram'
+import { resetSystemData } from '../../lib/systemReset'
 import { parseCurrencyInput } from '../../lib/utils'
 import type { AppSettings } from '../../types/database'
 
@@ -25,6 +27,11 @@ export default function AdminSettings() {
   const [settingsSaveError, setSettingsSaveError] = useState<string | null>(null)
   const [sweepMessage, setSweepMessage] = useState<string | null>(null)
   const [sweeping, setSweeping] = useState(false)
+  const [resetModalOpen, setResetModalOpen] = useState(false)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
+  const [resetSuccess, setResetSuccess] = useState(false)
 
   useEffect(() => {
     if (!settingsLoading) setForm(settings)
@@ -71,6 +78,23 @@ export default function AdminSettings() {
     const res = await runReminderSweepNow()
     setSweepMessage(res.message)
     setSweeping(false)
+  }
+
+  const submitSystemReset = async () => {
+    setResetting(true)
+    setResetError(null)
+    setResetSuccess(false)
+    const res = await resetSystemData(resetPassword)
+    setResetting(false)
+
+    if (res.error) {
+      setResetError(res.error)
+      return
+    }
+
+    setResetPassword('')
+    setResetModalOpen(false)
+    setResetSuccess(true)
   }
 
   return (
@@ -146,6 +170,13 @@ export default function AdminSettings() {
             onChange={(e) => setForm({ ...form, branch_delete_password: e.target.value })}
             placeholder="Required before branch users can delete entries"
           />
+          <Input
+            label="System Reset Password"
+            type="password"
+            value={form.system_reset_password}
+            onChange={(e) => setForm({ ...form, system_reset_password: e.target.value })}
+            placeholder="Required before the admin reset can run"
+          />
           <div className="sm:col-span-2">
             <Input
               label="Default Telegram Chat ID"
@@ -208,6 +239,70 @@ export default function AdminSettings() {
         </Button>
         {sweepMessage && <p className="text-xs text-slate-500 mt-2 break-words">{sweepMessage}</p>}
       </div>
+
+      <div className="card border-red-200 dark:border-red-900 bg-red-50/70 dark:bg-red-950/20">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle size={18} className="text-red-600 dark:text-red-400" />
+              <h3 className="font-semibold text-red-900 dark:text-red-200">Reset System Data</h3>
+            </div>
+            <p className="text-sm text-red-800/80 dark:text-red-200/80">
+              Clear all branch entries, notifications, reports history, and device approvals. Branches, admin accounts, and settings stay available.
+            </p>
+            {resetSuccess && <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-3">System data was reset successfully.</p>}
+          </div>
+          <Button
+            variant="danger"
+            className="shrink-0"
+            onClick={() => {
+              setResetError(null)
+              setResetModalOpen(true)
+            }}
+          >
+            <RotateCcw size={16} /> Reset
+          </Button>
+        </div>
+      </div>
+
+      <Modal
+        open={resetModalOpen}
+        onClose={() => {
+          if (!resetting) setResetModalOpen(false)
+        }}
+        title="Reset system data"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            This will remove all operational records and free every branch for fresh device selection. Enter the reset password to continue.
+          </p>
+          <Input
+            label="Reset Password"
+            type="password"
+            autoFocus
+            value={resetPassword}
+            onChange={(e) => setResetPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && resetPassword && !resetting) void submitSystemReset()
+            }}
+          />
+          {resetError && <p className="text-sm text-red-500">{resetError}</p>}
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!resetting) setResetModalOpen(false)
+              }}
+              disabled={resetting}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void submitSystemReset()} disabled={resetting || !resetPassword}>
+              {resetting ? 'Resetting...' : 'Reset Everything'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

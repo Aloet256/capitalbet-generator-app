@@ -172,6 +172,7 @@ export interface AppSettings {
   telegram_default_chat_id: string
   fuel_price_per_litre: number
   branch_delete_password: string
+  system_reset_password: string
   generator_service_technician_name: string
   generator_service_technician_phone: string
   generator_service_company: string
