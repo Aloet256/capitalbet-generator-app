@@ -10,6 +10,43 @@ function isAsciiHeaderValue(value: string) {
   return /^[\x20-\x7E]*$/.test(value)
 }
 
+function asciiHeaderValue(value: unknown) {
+  return String(value ?? '').replace(/[^\x20-\x7E]/g, '')
+}
+
+function installHeaderValueGuard() {
+  if (typeof Headers === 'undefined') return
+  const proto = Headers.prototype as Headers & { __capitalbetHeaderGuard?: boolean }
+  if (proto.__capitalbetHeaderGuard) return
+
+  const originalSet = Headers.prototype.set
+  const originalAppend = Headers.prototype.append
+
+  Headers.prototype.set = function set(name: string, value: string) {
+    try {
+      return originalSet.call(this, name, value)
+    } catch (error) {
+      if (errorMessage(error).includes('non ISO-8859-1')) {
+        return originalSet.call(this, name, asciiHeaderValue(value))
+      }
+      throw error
+    }
+  }
+
+  Headers.prototype.append = function append(name: string, value: string) {
+    try {
+      return originalAppend.call(this, name, value)
+    } catch (error) {
+      if (errorMessage(error).includes('non ISO-8859-1')) {
+        return originalAppend.call(this, name, asciiHeaderValue(value))
+      }
+      throw error
+    }
+  }
+
+  proto.__capitalbetHeaderGuard = true
+}
+
 function sanitizeSupabaseAuthStorage() {
   if (typeof localStorage === 'undefined') return
 
@@ -77,6 +114,7 @@ if (!url || !anonKey) {
   )
 }
 
+installHeaderValueGuard()
 sanitizeSupabaseAuthStorage()
 const deviceFingerprint = getDeviceFingerprint()
 
