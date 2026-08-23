@@ -73,6 +73,40 @@ function minutes(raw: unknown): string {
   return `${Math.max(0, Math.round(amount)).toLocaleString('en-US')} min`
 }
 
+function parseDateOnly(raw: unknown): Date | null {
+  const text = String(raw ?? '').trim()
+  if (!text) return null
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (match) {
+    const [, year, month, day] = match
+    return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+  }
+
+  const date = new Date(text)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function ordinalDay(day: number): string {
+  const mod100 = day % 100
+  if (mod100 >= 11 && mod100 <= 13) return `${day}th`
+  const suffix = day % 10 === 1 ? 'st' : day % 10 === 2 ? 'nd' : day % 10 === 3 ? 'rd' : 'th'
+  return `${day}${suffix}`
+}
+
+function longDate(raw: unknown): string {
+  const date = parseDateOnly(raw)
+  if (!date) return '-'
+  const month = date.toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })
+  return `${ordinalDay(date.getUTCDate())} ${month} ${date.getUTCFullYear()}`
+}
+
+function nextMonthDate(raw: unknown): string {
+  const date = parseDateOnly(raw)
+  if (!date) return '-'
+  date.setUTCMonth(date.getUTCMonth() + 1)
+  return longDate(date.toISOString().slice(0, 10))
+}
+
 function todayLabel(): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Kampala',
@@ -285,7 +319,7 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
   const branchName = branch?.name ? escapeHtml(branch.name) : value(details, 'branch_name', 'Branch')
   const branchHeading = branch?.name ? escapeHtml(branch.name.toUpperCase()) : value(details, 'branch_name', 'Branch').toUpperCase()
   const region = branch?.region ? escapeHtml(branch.region) : value(details, 'region', '')
-  const branchLine = detailLine('Branch', `${branchName}${region ? ` (${region})` : ''}`)
+  const branchLine = detailLine('🏢 Branch', `${branchName}${region ? ` (${region})` : ''}`)
   const location = section('Location', [branchLine])
 
   switch (payload.type) {
@@ -294,9 +328,9 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...location,
         '',
         ...section('Request Details', [
-          detailLine('Access type', value(details, 'access_type')),
-          detailLine('Device', value(details, 'device_label')),
-          detailLine('Requested', value(details, 'requested_at')),
+          detailLine('🔐 Access type', value(details, 'access_type')),
+          detailLine('💻 Device', value(details, 'device_label')),
+          detailLine('🕒 Requested', value(details, 'requested_at')),
         ]),
       ])
 
@@ -305,8 +339,8 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...location,
         '',
         ...section('Approval Details', [
-          detailLine('Access type', value(details, 'access_type')),
-          detailLine('Device', value(details, 'device_label')),
+          detailLine('🔐 Access type', value(details, 'access_type')),
+          detailLine('💻 Device', value(details, 'device_label')),
         ]),
       ])
 
@@ -314,14 +348,14 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
       return telegramMessage('Device Access Revoked', '🚫', 'A device has been blocked from branch access.', [
         ...location,
         '',
-        ...section('Device Details', [detailLine('Device', value(details, 'device_label'))]),
+        ...section('Device Details', [detailLine('💻 Device', value(details, 'device_label'))]),
       ])
 
     case 'device_restored':
       return telegramMessage('Device Access Restored', '✅', 'A previously revoked device has been restored.', [
         ...location,
         '',
-        ...section('Device Details', [detailLine('Device', value(details, 'device_label'))]),
+        ...section('Device Details', [detailLine('💻 Device', value(details, 'device_label'))]),
       ])
 
     case 'power_outage_started': {
@@ -355,11 +389,11 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...location,
         '',
         ...section('Refill Summary', [
-          detailLine('Date', value(details, 'refill_date')),
-          detailLine('Litres', value(details, 'litres')),
-          detailLine('Cost', money(details.cost)),
-          detailLine('Authorized by', value(details, 'authorized_by')),
-          detailLine('Remarks', value(details, 'remarks')),
+          detailLine('📅 Date', value(details, 'refill_date')),
+          detailLine('🛢️ Litres', value(details, 'litres')),
+          detailLine('💰 Cost', money(details.cost)),
+          detailLine('👤 Authorized by', value(details, 'authorized_by')),
+          detailLine('📝 Remarks', value(details, 'remarks')),
         ]),
       ])
 
@@ -368,14 +402,14 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...location,
         '',
         ...section('Service Details', [
-          detailLine('Service date', value(details, 'service_date')),
-          detailLine('Technician', value(details, 'technician_name')),
-          detailLine('Phone', value(details, 'technician_phone')),
-          detailLine('Company', value(details, 'company')),
-          detailLine('Repair details', serviceDetails(details)),
-          detailLine('Cost', money(details.cost)),
-          detailLine('Work done', value(details, 'work_done')),
-          detailLine('Remarks', value(details, 'remarks')),
+          detailLine('📅 Service date', value(details, 'service_date')),
+          detailLine('👷 Technician', value(details, 'technician_name')),
+          detailLine('☎️ Phone', value(details, 'technician_phone')),
+          detailLine('🏢 Company', value(details, 'company')),
+          detailLine('🛠️ Repair details', serviceDetails(details)),
+          detailLine('💰 Cost', money(details.cost)),
+          detailLine('✅ Work done', value(details, 'work_done')),
+          detailLine('📝 Remarks', value(details, 'remarks')),
         ]),
       ])
 
@@ -384,39 +418,54 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...location,
         '',
         ...section('Repair Details', [
-          detailLine('Date', value(details, 'repair_date')),
-          detailLine('Category', value(details, 'category')),
-          detailLine('Description', value(details, 'description')),
-          detailLine('Cost', money(details.cost)),
+          detailLine('📅 Date', value(details, 'repair_date')),
+          detailLine('🏷️ Category', value(details, 'category')),
+          detailLine('🧾 Description', value(details, 'description')),
+          detailLine('💰 Cost', money(details.cost)),
         ]),
       ])
 
-    case 'dstv_subscription':
-      return telegramMessage('DSTV Subscription Recorded', '📺', 'Entertainment utility payment has been captured.', [
-        ...location,
+    case 'dstv_subscription': {
+      const subscriptionDate = value(details, 'subscription_date')
+      const nextSubscriptionDate = details.renewal_date ? longDate(details.renewal_date) : nextMonthDate(details.subscription_date)
+      return compactLines([
+        '📺 <b>DSTV Subscription</b>',
+        `<b>Branch: ${branchName}${region ? ` (${region})` : ''}</b>`,
+        'Entertainment utility payment has been captured.',
+        `<b>Date:</b> <b>${longDate(details.subscription_date)}</b>`,
         '',
-        ...section('Subscription Details', [
-          detailLine('Date', value(details, 'subscription_date')),
-          detailLine('Package', value(details, 'package')),
-          detailLine('Smart card', value(details, 'smart_card_number')),
-          detailLine('Amount', money(details.amount)),
-          detailLine('Remarks', value(details, 'remarks')),
+        '<b>Subscription Details</b>',
+        ...compactLines([
+          detailLine('📅 Date', subscriptionDate),
+          detailLine('📦 Package', value(details, 'package')),
+          detailLine('💳 Smart card', value(details, 'smart_card_number')),
+          detailLine('💰 Amount', money(details.amount)),
+          detailLine('📝 Remarks', value(details, 'remarks')),
         ]),
-      ])
+        `<b>Next Subscription Date:</b> ${nextSubscriptionDate}`,
+      ]).join('\n')
+    }
 
-    case 'yaka_purchase':
-      return telegramMessage('Yaka Purchase Recorded', '⚡', 'Electricity token purchase has been captured.', [
-        ...location,
+    case 'yaka_purchase': {
+      const purchaseDate = value(details, 'purchase_date')
+      const nextReloadDate = details.expected_reload_date ? longDate(details.expected_reload_date) : nextMonthDate(details.purchase_date)
+      return compactLines([
+        '⚡️ <b>Yaka Purchase Recorded</b>',
+        `<b>Branch: ${branchName}${region ? ` (${region})` : ''}</b>`,
+        'Electricity token purchase has been captured.',
+        `<b>Date:</b> <b>${longDate(details.purchase_date)}</b>`,
         '',
-        ...section('Purchase Details', [
-          detailLine('Date', value(details, 'purchase_date')),
-          detailLine('Expected reload', value(details, 'expected_reload_date')),
-          detailLine('Meter', value(details, 'meter_number')),
-          detailLine('Units', value(details, 'units')),
-          detailLine('Amount', money(details.amount)),
-          detailLine('Remarks', value(details, 'remarks')),
+        '<b>Purchase Details</b>',
+        ...compactLines([
+          detailLine('📅 Date', purchaseDate),
+          detailLine('🔢 Meter', value(details, 'meter_number')),
+          detailLine('⚡ Units', value(details, 'units')),
+          detailLine('💰 Amount', money(details.amount)),
+          detailLine('📝 Remarks', value(details, 'remarks')),
         ]),
-      ])
+        `<b>Next Reload Date:</b> ${nextReloadDate}`,
+      ]).join('\n')
+    }
   }
 }
 

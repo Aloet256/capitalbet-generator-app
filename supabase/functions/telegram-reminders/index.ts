@@ -261,14 +261,14 @@ Deno.serve(async (req) => {
         destination.botToken,
         destination.chatId,
         telegramMessage('Generator Service Due', '🔧', 'Preventive maintenance is approaching for this generator.', [
-          ...section('Location', [detailLine('Branch', branchName)]),
+          ...section('Location', [detailLine('🏢 Branch', branchName)]),
           '',
           ...section('Schedule', [
-            detailLine('Due date', s.next_service_date),
-            detailLine('Reminder window', `${serviceDays} day(s) before due date`),
+            detailLine('📅 Due date', s.next_service_date),
+            detailLine('⏳ Reminder window', `${serviceDays} day(s) before due date`),
           ]),
           '',
-          ...section('Action', [detailLine('Next step', 'Plan the service before the due date.')]),
+          ...section('Action', [detailLine('✅ Next step', 'Plan the service before the due date.')]),
         ]),
       )
     } catch (error) {
@@ -309,15 +309,15 @@ Deno.serve(async (req) => {
         destination.botToken,
         destination.chatId,
         telegramMessage('DSTV Renewal Due', '📺', 'Subscription renewal is approaching for this branch.', [
-          ...section('Location', [detailLine('Branch', branchName)]),
+          ...section('Location', [detailLine('🏢 Branch', branchName)]),
           '',
           ...section('Subscription', [
-            detailLine('Package', (d as any).package),
-            detailLine('Renewal date', d.renewal_date),
-            detailLine('Reminder window', `${dstvDays} day(s) before renewal`),
+            detailLine('📦 Package', (d as any).package),
+            detailLine('📅 Renewal date', d.renewal_date),
+            detailLine('⏳ Reminder window', `${dstvDays} day(s) before renewal`),
           ]),
           '',
-          ...section('Action', [detailLine('Next step', 'Prepare renewal before service interruption.')]),
+          ...section('Action', [detailLine('✅ Next step', 'Prepare renewal before service interruption.')]),
         ]),
       )
     } catch (error) {
@@ -367,14 +367,14 @@ Deno.serve(async (req) => {
         destination.botToken,
         destination.chatId,
         telegramMessage('Yaka Reload Due', '⚡', 'Electricity reload is approaching for this branch.', [
-          ...section('Location', [detailLine('Branch', branch.name)]),
+          ...section('Location', [detailLine('🏢 Branch', branch.name)]),
           '',
           ...section('Reload Schedule', [
-            detailLine('Expected reload', latest.expected_reload_date),
-            detailLine('Reminder window', `${yakaDays} day(s) before reload`),
+            detailLine('📅 Expected reload', latest.expected_reload_date),
+            detailLine('⏳ Reminder window', `${yakaDays} day(s) before reload`),
           ]),
           '',
-          ...section('Action', [detailLine('Next step', 'Confirm the meter balance and prepare the next token purchase.')]),
+          ...section('Action', [detailLine('✅ Next step', 'Confirm the meter balance and prepare the next token purchase.')]),
         ]),
       )
     } catch (error) {
