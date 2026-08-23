@@ -117,7 +117,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
   if (mode === 'daily' || mode === 'auto') {
     ranges.push({
       key: 'daily',
-      title: 'DAILY FUEL COST REPORT',
+      title: 'Daily Fuel Cost Report',
       start: todayKey,
       end: shiftDateKey(todayKey, 1),
       label: formatDateKey(todayKey),
@@ -128,7 +128,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
     const start = startOfWeekKey(todayKey)
     ranges.push({
       key: 'weekly',
-      title: 'WEEKLY FUEL COST REPORT',
+      title: 'Weekly Fuel Cost Report',
       start,
       end: shiftDateKey(todayKey, 1),
       label: `${formatDateKey(start)} - ${formatDateKey(todayKey)}`,
@@ -139,7 +139,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
     const start = startOfMonthKey(todayKey)
     ranges.push({
       key: 'monthly',
-      title: 'MONTHLY FUEL COST REPORT',
+      title: 'Monthly Fuel Cost Report',
       start,
       end: nextMonthStartKey(todayKey),
       label: parseDateKey(todayKey).toLocaleDateString('en-GB', {
@@ -247,6 +247,14 @@ function chunkReport(header: string, lines: string[]): string[] {
   return chunks
 }
 
+function reportTone(title: string): string {
+  const normalized = title.toLowerCase()
+  if (normalized.includes('daily')) return 'End-of-day fuel usage summary for generator operations.'
+  if (normalized.includes('weekly')) return 'Weekly fuel performance summary by branch.'
+  if (normalized.includes('monthly')) return 'Monthly fuel cost and volume summary by branch.'
+  return 'Fuel cost and volume summary by branch.'
+}
+
 async function buildAndSendReport(args: {
   botToken: string
   chatId: string
@@ -286,17 +294,30 @@ async function buildAndSendReport(args: {
   )
 
   const header = [
-    `<b>${escapeHtml(args.title)}</b>`,
-    `<b>Region:</b> ${escapeHtml(args.region)}`,
-    `<b>Period:</b> ${escapeHtml(args.label)}`,
-    `<b>Total:</b> ${money(overall.cost)} / ${litres(overall.litres)} / ${overall.records} refill(s)`,
+    `⛽ <b>${escapeHtml(args.title)}</b>`,
+    `<i>${escapeHtml(reportTone(args.title))}</i>`,
     '',
-    '<b>Branch totals</b>',
+    '<b>Report Context</b>',
+    `• <b>Region:</b> ${escapeHtml(args.region || 'Unassigned Region')}`,
+    `• <b>Period:</b> ${escapeHtml(args.label)}`,
+    '',
+    '<b>Summary</b>',
+    `• <b>Total cost:</b> ${money(overall.cost)}`,
+    `• <b>Total litres:</b> ${litres(overall.litres)}`,
+    `• <b>Refill records:</b> ${overall.records}`,
+    '',
+    '<b>Branch Breakdown</b>',
   ].join('\n')
 
   const lines = args.branches.map((branch) => {
     const total = totals.get(branch.id) ?? { litres: 0, cost: 0, records: 0 }
-    return `- <b>${escapeHtml(branch.name)}</b> (${escapeHtml(branch.region)}): ${money(total.cost)} / ${litres(total.litres)} / ${total.records} refill(s)`
+    return [
+      '',
+      `• <b>${escapeHtml(branch.name)}</b>`,
+      `  Cost: ${money(total.cost)}`,
+      `  Litres: ${litres(total.litres)}`,
+      `  Refills: ${total.records}`,
+    ].join('\n')
   })
 
   for (const message of chunkReport(header, lines)) {

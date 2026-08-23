@@ -38,6 +38,8 @@ interface TelegramDestination {
   chat_id?: string
 }
 
+type MessageLine = string | null | undefined | false
+
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -80,12 +82,32 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
-function detailLine(icon: string, label: string, content: string): string {
-  return `${icon} <b>${label}:</b> ${content}`
+function compactLines(lines: MessageLine[]): string[] {
+  const result = lines.filter((line): line is string => typeof line === 'string')
+  while (result[result.length - 1] === '') result.pop()
+  return result
 }
 
-function telegramMessage(title: string, icon: string, lines: string[]): string {
-  return [`<b>${todayLabel()}</b>`, '', `${icon} <b>${title}</b>`, '', ...lines].join('\n')
+function detailLine(label: string, content: string): string | null {
+  const clean = content.trim()
+  if (!clean || clean === '-') return null
+  return `• <b>${label}:</b> ${clean}`
+}
+
+function section(title: string, lines: MessageLine[]): MessageLine[] {
+  const clean = compactLines(lines)
+  return clean.length ? [`<b>${title}</b>`, ...clean] : []
+}
+
+function telegramMessage(title: string, icon: string, tone: string, lines: MessageLine[]): string {
+  const body = compactLines(lines)
+  return compactLines([
+    `${icon} <b>${title}</b>`,
+    tone ? `<i>${escapeHtml(tone)}</i>` : null,
+    '',
+    `<b>Sent:</b> ${todayLabel()}`,
+    ...(body.length ? ['', ...body] : []),
+  ]).join('\n')
 }
 
 async function getBranch(branchId?: string) {
@@ -188,91 +210,132 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
   const details = payload.details ?? {}
   const branchName = branch?.name ? escapeHtml(branch.name) : value(details, 'branch_name', 'Branch')
   const region = branch?.region ? escapeHtml(branch.region) : value(details, 'region', '')
-  const branchLine = detailLine('🏢', 'Branch', `${branchName}${region ? ` (${region})` : ''}`)
+  const branchLine = detailLine('Branch', `${branchName}${region ? ` (${region})` : ''}`)
+  const location = section('Location', [branchLine])
 
   switch (payload.type) {
     case 'device_request':
-      return telegramMessage('DEVICE APPROVAL REQUEST', '🖥️', [
-        branchLine,
-        detailLine('📟', 'Device', value(details, 'device_label')),
-        detailLine('⏰', 'Requested', value(details, 'requested_at')),
+      return telegramMessage('Device Access Request', '🖥️', 'Admin review is required before this device can continue.', [
+        ...location,
+        '',
+        ...section('Request Details', [
+          detailLine('Access type', value(details, 'access_type')),
+          detailLine('Device', value(details, 'device_label')),
+          detailLine('Requested', value(details, 'requested_at')),
+        ]),
       ])
 
     case 'device_approved':
-      return telegramMessage('DEVICE APPROVED', '✅', [branchLine, detailLine('📟', 'Device', value(details, 'device_label'))])
+      return telegramMessage('Device Access Approved', '✅', 'This device is now allowed to use the selected branch.', [
+        ...location,
+        '',
+        ...section('Approval Details', [
+          detailLine('Access type', value(details, 'access_type')),
+          detailLine('Device', value(details, 'device_label')),
+        ]),
+      ])
 
     case 'device_revoked':
-      return telegramMessage('DEVICE REVOKED', '🚫', [branchLine, detailLine('📟', 'Device', value(details, 'device_label'))])
+      return telegramMessage('Device Access Revoked', '🚫', 'A device has been blocked from branch access.', [
+        ...location,
+        '',
+        ...section('Device Details', [detailLine('Device', value(details, 'device_label'))]),
+      ])
 
     case 'device_restored':
-      return telegramMessage('DEVICE RESTORED', '♻️', [branchLine, detailLine('📟', 'Device', value(details, 'device_label'))])
+      return telegramMessage('Device Access Restored', '✅', 'A previously revoked device has been restored.', [
+        ...location,
+        '',
+        ...section('Device Details', [detailLine('Device', value(details, 'device_label'))]),
+      ])
 
     case 'power_outage_started':
-      return telegramMessage('POWER OUTAGE', '🔌', [
-        branchLine,
-        detailLine('⏰', 'Started', value(details, 'started_at')),
-        detailLine('📝', 'Notes', value(details, 'notes')),
+      return telegramMessage('Power Outage Started', '🔌', 'Generator support is now active for this branch.', [
+        ...location,
+        '',
+        ...section('Outage Details', [
+          detailLine('Started', value(details, 'started_at')),
+          detailLine('Notes', value(details, 'notes')),
+        ]),
       ])
 
     case 'power_outage_stopped':
-      return telegramMessage('POWER RESTORED', '💡', [
-        branchLine,
-        detailLine('⏰', 'Started', value(details, 'started_at')),
-        detailLine('✅', 'Restored', value(details, 'ended_at')),
-        detailLine('⏱️', 'Generator runtime', minutes(details.duration_minutes)),
+      return telegramMessage('Power Restored', '💡', 'Mains power is back and generator runtime has been recorded.', [
+        ...location,
+        '',
+        ...section('Restoration Summary', [
+          detailLine('Started', value(details, 'started_at')),
+          detailLine('Restored', value(details, 'ended_at')),
+          detailLine('Generator runtime', minutes(details.duration_minutes)),
+        ]),
       ])
 
     case 'fuel_refill':
-      return telegramMessage('FUEL', '⛽', [
-        branchLine,
-        detailLine('📅', 'Date', value(details, 'refill_date')),
-        detailLine('🛢️', 'Litres', value(details, 'litres')),
-        detailLine('💰', 'Cost', money(details.cost)),
-        detailLine('👤', 'Authorized by', value(details, 'authorized_by')),
-        detailLine('📝', 'Remarks', value(details, 'remarks')),
+      return telegramMessage('Fuel Refill Logged', '⛽', 'A generator fuel refill has been recorded.', [
+        ...location,
+        '',
+        ...section('Refill Summary', [
+          detailLine('Date', value(details, 'refill_date')),
+          detailLine('Litres', value(details, 'litres')),
+          detailLine('Cost', money(details.cost)),
+          detailLine('Authorized by', value(details, 'authorized_by')),
+          detailLine('Remarks', value(details, 'remarks')),
+        ]),
       ])
 
     case 'service_record':
-      return telegramMessage('GENERATOR SERVICE', '🔧', [
-        branchLine,
-        detailLine('📅', 'Service date', value(details, 'service_date')),
-        detailLine('👷', 'Technician', value(details, 'technician_name')),
-        detailLine('☎️', 'Phone', value(details, 'technician_phone')),
-        detailLine('🏢', 'Company', value(details, 'company')),
-        detailLine('🛠️', 'Items/repaired done', serviceDetails(details)),
-        detailLine('💰', 'Cost', money(details.cost)),
-        detailLine('🧾', 'Work done', value(details, 'work_done')),
-        detailLine('📝', 'Remarks', value(details, 'remarks')),
+      return telegramMessage('Generator Service Completed', '🔧', 'A generator service record has been submitted.', [
+        ...location,
+        '',
+        ...section('Service Details', [
+          detailLine('Service date', value(details, 'service_date')),
+          detailLine('Technician', value(details, 'technician_name')),
+          detailLine('Phone', value(details, 'technician_phone')),
+          detailLine('Company', value(details, 'company')),
+          detailLine('Repair details', serviceDetails(details)),
+          detailLine('Cost', money(details.cost)),
+          detailLine('Work done', value(details, 'work_done')),
+          detailLine('Remarks', value(details, 'remarks')),
+        ]),
       ])
 
     case 'repair_record':
-      return telegramMessage('REPAIR', '🛠️', [
-        branchLine,
-        detailLine('📅', 'Date', value(details, 'repair_date')),
-        detailLine('🏷️', 'Category', value(details, 'category')),
-        detailLine('🧾', 'Description', value(details, 'description')),
-        detailLine('💰', 'Cost', money(details.cost)),
+      return telegramMessage('Repair Logged', '🛠️', 'A branch repair has been recorded for follow-up and reporting.', [
+        ...location,
+        '',
+        ...section('Repair Details', [
+          detailLine('Date', value(details, 'repair_date')),
+          detailLine('Category', value(details, 'category')),
+          detailLine('Description', value(details, 'description')),
+          detailLine('Cost', money(details.cost)),
+        ]),
       ])
 
     case 'dstv_subscription':
-      return telegramMessage('DSTV', '📺', [
-        branchLine,
-        detailLine('📅', 'Date', value(details, 'subscription_date')),
-        detailLine('📦', 'Package', value(details, 'package')),
-        detailLine('💳', 'Smart card', value(details, 'smart_card_number')),
-        detailLine('💰', 'Amount', money(details.amount)),
-        detailLine('📝', 'Remarks', value(details, 'remarks')),
+      return telegramMessage('DSTV Subscription Recorded', '📺', 'Entertainment utility payment has been captured.', [
+        ...location,
+        '',
+        ...section('Subscription Details', [
+          detailLine('Date', value(details, 'subscription_date')),
+          detailLine('Package', value(details, 'package')),
+          detailLine('Smart card', value(details, 'smart_card_number')),
+          detailLine('Amount', money(details.amount)),
+          detailLine('Remarks', value(details, 'remarks')),
+        ]),
       ])
 
     case 'yaka_purchase':
-      return telegramMessage('YAKA', '⚡', [
-        branchLine,
-        detailLine('📅', 'Date', value(details, 'purchase_date')),
-        detailLine('🗓️', 'Expected reload', value(details, 'expected_reload_date')),
-        detailLine('🔢', 'Meter', value(details, 'meter_number')),
-        detailLine('⚡', 'Units', value(details, 'units')),
-        detailLine('💰', 'Amount', money(details.amount)),
-        detailLine('📝', 'Remarks', value(details, 'remarks')),
+      return telegramMessage('Yaka Purchase Recorded', '⚡', 'Electricity token purchase has been captured.', [
+        ...location,
+        '',
+        ...section('Purchase Details', [
+          detailLine('Date', value(details, 'purchase_date')),
+          detailLine('Expected reload', value(details, 'expected_reload_date')),
+          detailLine('Meter', value(details, 'meter_number')),
+          detailLine('Units', value(details, 'units')),
+          detailLine('Amount', money(details.amount)),
+          detailLine('Remarks', value(details, 'remarks')),
+        ]),
       ])
   }
 }

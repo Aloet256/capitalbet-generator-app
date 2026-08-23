@@ -26,6 +26,8 @@ interface ReminderRunOptions {
   checkedDate: string
 }
 
+type MessageLine = string | null | undefined | false
+
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -44,12 +46,32 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
-function detailLine(icon: string, label: string, content: unknown): string {
-  return `${icon} <b>${label}:</b> ${escapeHtml(content || '-')}`
+function compactLines(lines: MessageLine[]): string[] {
+  const result = lines.filter((line): line is string => typeof line === 'string')
+  while (result[result.length - 1] === '') result.pop()
+  return result
 }
 
-function telegramMessage(title: string, icon: string, lines: string[]): string {
-  return [`<b>${todayLabel()}</b>`, '', `${icon} <b>${title}</b>`, '', ...lines].join('\n')
+function detailLine(label: string, content: unknown): string | null {
+  const raw = String(content ?? '').trim()
+  if (!raw || raw === '-') return null
+  return `• <b>${label}:</b> ${escapeHtml(raw)}`
+}
+
+function section(title: string, lines: MessageLine[]): MessageLine[] {
+  const clean = compactLines(lines)
+  return clean.length ? [`<b>${title}</b>`, ...clean] : []
+}
+
+function telegramMessage(title: string, icon: string, tone: string, lines: MessageLine[]): string {
+  const body = compactLines(lines)
+  return compactLines([
+    `${icon} <b>${title}</b>`,
+    tone ? `<i>${escapeHtml(tone)}</i>` : null,
+    '',
+    `<b>Checked:</b> ${todayLabel()}`,
+    ...(body.length ? ['', ...body] : []),
+  ]).join('\n')
 }
 
 function dateOnlyKampala(date: Date): string {
@@ -238,9 +260,15 @@ Deno.serve(async (req) => {
       if (destination) telegramSent = await sendTelegram(
         destination.botToken,
         destination.chatId,
-        telegramMessage('GENERATOR SERVICE REMINDER', '🔧', [
-          detailLine('🏢', 'Branch', branchName),
-          detailLine('📅', 'Due date', s.next_service_date),
+        telegramMessage('Generator Service Due', '🔧', 'Preventive maintenance is approaching for this generator.', [
+          ...section('Location', [detailLine('Branch', branchName)]),
+          '',
+          ...section('Schedule', [
+            detailLine('Due date', s.next_service_date),
+            detailLine('Reminder window', `${serviceDays} day(s) before due date`),
+          ]),
+          '',
+          ...section('Action', [detailLine('Next step', 'Plan the service before the due date.')]),
         ]),
       )
     } catch (error) {
@@ -280,10 +308,16 @@ Deno.serve(async (req) => {
       if (destination) telegramSent = await sendTelegram(
         destination.botToken,
         destination.chatId,
-        telegramMessage('DSTV RENEWAL REMINDER', '📺', [
-          detailLine('🏢', 'Branch', branchName),
-          detailLine('📦', 'Package', (d as any).package),
-          detailLine('📅', 'Renewal date', d.renewal_date),
+        telegramMessage('DSTV Renewal Due', '📺', 'Subscription renewal is approaching for this branch.', [
+          ...section('Location', [detailLine('Branch', branchName)]),
+          '',
+          ...section('Subscription', [
+            detailLine('Package', (d as any).package),
+            detailLine('Renewal date', d.renewal_date),
+            detailLine('Reminder window', `${dstvDays} day(s) before renewal`),
+          ]),
+          '',
+          ...section('Action', [detailLine('Next step', 'Prepare renewal before service interruption.')]),
         ]),
       )
     } catch (error) {
@@ -332,9 +366,15 @@ Deno.serve(async (req) => {
       if (destination) telegramSent = await sendTelegram(
         destination.botToken,
         destination.chatId,
-        telegramMessage('YAKA RELOAD REMINDER', '⚡', [
-          detailLine('🏢', 'Branch', branch.name),
-          detailLine('📅', 'Expected reload', latest.expected_reload_date),
+        telegramMessage('Yaka Reload Due', '⚡', 'Electricity reload is approaching for this branch.', [
+          ...section('Location', [detailLine('Branch', branch.name)]),
+          '',
+          ...section('Reload Schedule', [
+            detailLine('Expected reload', latest.expected_reload_date),
+            detailLine('Reminder window', `${yakaDays} day(s) before reload`),
+          ]),
+          '',
+          ...section('Action', [detailLine('Next step', 'Confirm the meter balance and prepare the next token purchase.')]),
         ]),
       )
     } catch (error) {
