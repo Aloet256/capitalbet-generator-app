@@ -50,7 +50,7 @@ export function usePowerSessions(branchId: string | null) {
       type: 'power_outage_started',
       branchId,
       details: {
-        started_at: new Date(startedAt).toLocaleString(),
+        started_at: startedAt,
         notes: notes?.trim() || null,
       },
     })
@@ -71,8 +71,8 @@ export function usePowerSessions(branchId: string | null) {
       type: 'power_outage_stopped',
       branchId: ongoing.branch_id,
       details: {
-        started_at: new Date(ongoing.started_at).toLocaleString(),
-        ended_at: new Date(endedAt).toLocaleString(),
+        started_at: ongoing.started_at,
+        ended_at: endedAt,
         duration_minutes: (new Date(endedAt).getTime() - new Date(ongoing.started_at).getTime()) / 60000,
       },
     })

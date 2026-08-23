@@ -82,6 +82,80 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
+function formatDateTimeParts(raw: unknown): { date: string; time: string } {
+  const text = String(raw ?? '').trim()
+  const fallback = { date: todayLabel(), time: '-' }
+  if (!text) return fallback
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(text) || /(?:Z|[+-]\d{2}:?\d{2})$/.test(text)) {
+    const date = new Date(text)
+    if (!Number.isNaN(date.getTime())) {
+      return {
+        date: new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Africa/Kampala',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        }).format(date),
+        time: new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Africa/Kampala',
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }).format(date),
+      }
+    }
+  }
+
+  const [dateText, timeText] = text.split(',').map((part) => part.trim())
+  const dateParts = dateText?.split(/[/-]/).map(Number)
+  if (dateParts?.length === 3 && dateParts.every(Number.isFinite)) {
+    let [first, second, year] = dateParts
+    if (first > 31) [year, first, second] = dateParts
+    const month = first > 12 ? second : first
+    const day = first > 12 ? first : second
+    const date = new Date(Date.UTC(year, month - 1, day))
+    if (!Number.isNaN(date.getTime())) {
+      return {
+        date: date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }),
+        time: timeText ? timeText.replace(/\s+/g, ' ').toUpperCase() : fallback.time,
+      }
+    }
+  }
+
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return fallback
+  return {
+    date: parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Africa/Kampala' }),
+    time: parsed.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+      timeZone: 'Africa/Kampala',
+    }),
+  }
+}
+
+function generatorDuration(raw: unknown): string {
+  const amount = Number(raw)
+  if (!Number.isFinite(amount)) return '-'
+  const totalMinutes = Math.max(1, Math.round(amount))
+  const hours = Math.floor(totalMinutes / 60)
+  const mins = totalMinutes % 60
+  const parts: string[] = []
+  if (hours) parts.push(`${hours} ${hours === 1 ? 'HOUR' : 'HOURS'}`)
+  if (mins || parts.length === 0) parts.push(`${mins} ${mins === 1 ? 'MINUTE' : 'MINUTES'}`)
+  return parts.join(' ')
+}
+
+function notesLine(raw: unknown): string {
+  const clean = String(raw ?? '').trim()
+  if (!clean || clean === '-') return '<b>NOTES:-</b>'
+  return `<b>NOTES:</b> ${escapeHtml(clean)}`
+}
+
 function compactLines(lines: MessageLine[]): string[] {
   const result = lines.filter((line): line is string => typeof line === 'string')
   while (result[result.length - 1] === '') result.pop()
@@ -209,6 +283,7 @@ async function isAuthorized(req: Request, payload: NotifyPayload): Promise<boole
 function buildMessage(payload: NotifyPayload, branch: { name: string | null; region: string | null } | null): string {
   const details = payload.details ?? {}
   const branchName = branch?.name ? escapeHtml(branch.name) : value(details, 'branch_name', 'Branch')
+  const branchHeading = branch?.name ? escapeHtml(branch.name.toUpperCase()) : value(details, 'branch_name', 'Branch').toUpperCase()
   const region = branch?.region ? escapeHtml(branch.region) : value(details, 'region', '')
   const branchLine = detailLine('Branch', `${branchName}${region ? ` (${region})` : ''}`)
   const location = section('Location', [branchLine])
@@ -249,26 +324,31 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         ...section('Device Details', [detailLine('Device', value(details, 'device_label'))]),
       ])
 
-    case 'power_outage_started':
-      return telegramMessage('Power Outage Started', '🔌', 'Generator support is now active for this branch.', [
-        ...location,
+    case 'power_outage_started': {
+      const started = formatDateTimeParts(details.started_at)
+      return compactLines([
+        `<b>POWER OFF AT: ${branchHeading}</b>${region ? ` (${region})` : ''}`,
+        `<b>DATE: ${started.date}</b>`,
         '',
-        ...section('Outage Details', [
-          detailLine('Started', value(details, 'started_at')),
-          detailLine('Notes', value(details, 'notes')),
-        ]),
-      ])
+        `🔌 <b>POWER OFF AT:</b> ${escapeHtml(started.time)}`,
+        '⏰ <b>STARTED</b>',
+        '<b>RUNNING ON GENERATOR NOW</b>',
+        notesLine(details.notes),
+      ]).join('\n')
+    }
 
-    case 'power_outage_stopped':
-      return telegramMessage('Power Restored', '💡', 'Mains power is back and generator runtime has been recorded.', [
-        ...location,
+    case 'power_outage_stopped': {
+      const started = formatDateTimeParts(details.started_at)
+      const ended = formatDateTimeParts(details.ended_at)
+      return compactLines([
+        `<b>POWER IS BACK AT: ${branchHeading}</b>${region ? ` (${region})` : ''}`,
+        `<b>DATE: ${ended.date}</b>`,
         '',
-        ...section('Restoration Summary', [
-          detailLine('Started', value(details, 'started_at')),
-          detailLine('Restored', value(details, 'ended_at')),
-          detailLine('Generator runtime', minutes(details.duration_minutes)),
-        ]),
-      ])
+        `🔌 <b>POWER BACK:</b> ${escapeHtml(ended.time)}`,
+        `⏰ <b>OFF AT:</b> ${escapeHtml(started.time)}`,
+        `<b>TIME SPENT ON GENERATOR: ${generatorDuration(details.duration_minutes)}</b>`,
+      ]).join('\n')
+    }
 
     case 'fuel_refill':
       return telegramMessage('Fuel Refill Logged', '⛽', 'A generator fuel refill has been recorded.', [
