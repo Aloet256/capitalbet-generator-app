@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, EyeOff, KeyRound, Lightbulb, Pencil, RotateCcw, Send, ShieldCheck, SlidersHorizontal, Trash2, Tv, Wrench } from 'lucide-react'
+import { AlertTriangle, ChevronDown, EyeOff, KeyRound, Lightbulb, Pencil, RotateCcw, Send, ShieldCheck, SlidersHorizontal, Trash2, Tv, Wrench } from 'lucide-react'
 import { useAdminAuth } from '../../context/AdminAuthContext'
 import { useAppSettings } from '../../hooks/useAppSettings'
 import { Input } from '../../components/ui/Input'
@@ -52,6 +52,7 @@ export default function AdminSettings() {
   const [regionLoadError, setRegionLoadError] = useState<string | null>(null)
   const [branchesMissingRegion, setBranchesMissingRegion] = useState(0)
   const [branchUtilityRows, setBranchUtilityRows] = useState<BranchUtilityFormRow[]>([])
+  const [openUtilityBranches, setOpenUtilityBranches] = useState<Set<string>>(() => new Set())
   const [branchUtilityError, setBranchUtilityError] = useState<string | null>(null)
   const [telegramStatuses, setTelegramStatuses] = useState<TelegramRegionSecretStatus[]>([])
   const [telegramStatusLoading, setTelegramStatusLoading] = useState(false)
@@ -212,6 +213,15 @@ export default function AdminSettings() {
     setBranchUtilityRows((rows) =>
       rows.map((row) => (row.branch_id === branchId ? { ...row, [field]: value } : row))
     )
+  }
+
+  const toggleUtilityBranch = (branchId: string) => {
+    setOpenUtilityBranches((current) => {
+      const next = new Set(current)
+      if (next.has(branchId)) next.delete(branchId)
+      else next.add(branchId)
+      return next
+    })
   }
 
   const testSweep = async () => {
@@ -423,26 +433,48 @@ export default function AdminSettings() {
             {branchUtilityRows.length === 0 ? (
               <p className="text-sm text-slate-400">No active branches found.</p>
             ) : (
-              branchUtilityRows.map((row) => (
-                <div key={row.branch_id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-                  <div className="mb-3">
-                    <h5 className="font-semibold text-slate-800 dark:text-slate-100">{row.name}</h5>
-                    <p className="text-xs text-slate-400">{row.region}</p>
+              branchUtilityRows.map((row) => {
+                const isOpen = openUtilityBranches.has(row.branch_id)
+                const hasDstv = Boolean(row.dstv_smart_card_number.trim())
+                const hasYaka = Boolean(row.yaka_meter_number.trim())
+                return (
+                  <div key={row.branch_id} className="rounded-xl border border-slate-200 dark:border-slate-800">
+                    <button
+                      type="button"
+                      className="flex w-full flex-col gap-3 px-4 py-3 text-left sm:flex-row sm:items-center sm:justify-between"
+                      onClick={() => toggleUtilityBranch(row.branch_id)}
+                      aria-expanded={isOpen}
+                    >
+                      <div className="min-w-0">
+                        <h5 className="font-semibold text-slate-800 dark:text-slate-100">{row.name}</h5>
+                        <p className="text-xs text-slate-400">{row.region}</p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <Badge tone={hasDstv ? 'green' : 'slate'}>{hasDstv ? 'DSTV saved' : 'DSTV empty'}</Badge>
+                        <Badge tone={hasYaka ? 'green' : 'slate'}>{hasYaka ? 'Yaka saved' : 'Yaka empty'}</Badge>
+                        <ChevronDown
+                          size={18}
+                          className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                        />
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="grid gap-3 border-t border-slate-200 px-4 pb-4 pt-3 dark:border-slate-800 sm:grid-cols-2">
+                        <Input
+                          label="DSTV Smart Card Number"
+                          value={row.dstv_smart_card_number}
+                          onChange={(e) => updateBranchUtilityRow(row.branch_id, 'dstv_smart_card_number', e.target.value)}
+                        />
+                        <Input
+                          label="Yaka Meter Number"
+                          value={row.yaka_meter_number}
+                          onChange={(e) => updateBranchUtilityRow(row.branch_id, 'yaka_meter_number', e.target.value)}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <div className="grid sm:grid-cols-2 gap-3">
-                    <Input
-                      label="DSTV Smart Card Number"
-                      value={row.dstv_smart_card_number}
-                      onChange={(e) => updateBranchUtilityRow(row.branch_id, 'dstv_smart_card_number', e.target.value)}
-                    />
-                    <Input
-                      label="Yaka Meter Number"
-                      value={row.yaka_meter_number}
-                      onChange={(e) => updateBranchUtilityRow(row.branch_id, 'yaka_meter_number', e.target.value)}
-                    />
-                  </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
 
