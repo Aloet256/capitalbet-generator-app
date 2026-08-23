@@ -110,10 +110,10 @@ begin
 
     v_pin_bytes := gen_random_bytes(4);
     v_pin_number := (
-      get_byte(v_pin_bytes, 0) * 16777216
-      + get_byte(v_pin_bytes, 1) * 65536
-      + get_byte(v_pin_bytes, 2) * 256
-      + get_byte(v_pin_bytes, 3)
+      get_byte(v_pin_bytes, 0)::bigint * 16777216
+      + get_byte(v_pin_bytes, 1)::bigint * 65536
+      + get_byte(v_pin_bytes, 2)::bigint * 256
+      + get_byte(v_pin_bytes, 3)::bigint
     ) % 900000 + 100000;
     v_pin := v_pin_number::text;
     v_pin_salt := encode(gen_random_bytes(16), 'hex');
