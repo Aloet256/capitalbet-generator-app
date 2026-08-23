@@ -139,20 +139,6 @@ async function linkAdminProfile(authUserId) {
   console.log('Created admin profile.')
 }
 
-async function configureTelegramChat() {
-  await supabaseFetch('/rest/v1/app_settings', {
-    method: 'POST',
-    body: {
-      key: 'telegram_default_chat_id',
-      value: telegramDefaultChatId,
-    },
-    headers: {
-      Prefer: 'resolution=merge-duplicates,return=minimal',
-    },
-  })
-  console.log('Configured default Telegram chat ID.')
-}
-
 async function verifyAdminLogin() {
   const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
     method: 'POST',
@@ -179,7 +165,6 @@ const adminUsername = process.env.VITE_ADMIN_USERNAME || 'admin'
 const adminEmail = process.env.VITE_ADMIN_EMAIL || 'admin@capitalbet.example'
 const adminPassword = process.env.SUPABASE_ADMIN_PASSWORD
 const adminFullName = process.env.SUPABASE_ADMIN_FULL_NAME || 'Super Admin'
-const telegramDefaultChatId = process.env.TELEGRAM_DEFAULT_CHAT_ID || '-1003743501704'
 
 if (!supabaseUrl) throw new Error('Missing VITE_SUPABASE_URL.')
 if (!publishableKey) throw new Error('Missing VITE_SUPABASE_ANON_KEY.')
@@ -193,6 +178,5 @@ if (!adminPassword) {
 await seedBranchesIfEmpty()
 const authUser = await createOrFindAuthUser()
 await linkAdminProfile(authUser.id)
-await configureTelegramChat()
 await verifyAdminLogin()
 console.log('Supabase provisioning complete.')

@@ -30,12 +30,10 @@ interface FuelRow {
   cost: number | string
 }
 
-interface TelegramRegionConfigEntry {
+interface TelegramDestination {
   bot_token?: string
   chat_id?: string
 }
-
-type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -155,16 +153,6 @@ function reportRanges(mode: ReportMode, todayKey: string) {
   return ranges
 }
 
-async function getSetting<T>(key: string, fallback: T): Promise<T> {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
-  return (data?.value as T) ?? fallback
-}
-
-async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
-  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
-  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
-}
-
 async function isAuthorized(req: Request): Promise<boolean> {
   const cronSecret = req.headers.get('x-cron-secret') ?? ''
   if (FUEL_REPORT_CRON_SECRET && cronSecret === FUEL_REPORT_CRON_SECRET) return true
@@ -192,6 +180,23 @@ async function recordAdminWarning(message: string) {
   if (error) console.error('Failed to record Telegram configuration warning', error)
 }
 
+async function getEncryptedRegionDestination(region: string): Promise<{ botToken: string; chatId: string } | null> {
+  const { data, error } = await supabase
+    .rpc('fn_get_telegram_region_destination', { p_region: region })
+    .maybeSingle()
+
+  if (error) {
+    console.error('Failed to load encrypted Telegram destination', error)
+    return null
+  }
+
+  const destination = data as TelegramDestination | null
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) return null
+  return { botToken, chatId }
+}
+
 async function getRegionDestination(region: string): Promise<{ botToken: string; chatId: string } | null> {
   const cleanRegion = region.trim()
   if (!cleanRegion) {
@@ -199,16 +204,13 @@ async function getRegionDestination(region: string): Promise<{ botToken: string;
     return null
   }
 
-  const config = await getTelegramRegionConfig()
-  const destination = config[cleanRegion]
-  const botToken = destination?.bot_token?.trim() ?? ''
-  const chatId = destination?.chat_id?.trim() ?? ''
-  if (!botToken || !chatId) {
+  const destination = await getEncryptedRegionDestination(cleanRegion)
+  if (!destination) {
     await recordAdminWarning(`Telegram fuel report skipped for ${cleanRegion}. Configure bot token and chat ID for ${cleanRegion}.`)
     return null
   }
 
-  return { botToken, chatId }
+  return destination
 }
 
 async function sendTelegram(botToken: string, chatId: string, text: string) {

@@ -1,5 +1,7 @@
 -- Run once in Supabase SQL Editor before using region-based Telegram routing.
--- The actual region bot tokens and chat IDs are edited in Admin Settings.
+-- Then apply supabase/migrations/20260811_06_private_telegram_secrets.sql.
+-- Region bot tokens and chat IDs are edited in Admin Settings and stored
+-- encrypted; do not put them in SQL or source files.
 
 update branches
 set region = 'Unassigned Region'
@@ -17,10 +19,6 @@ begin
       add constraint branches_region_required check (btrim(region) <> '');
   end if;
 end $$;
-
-insert into app_settings (key, value)
-values ('telegram_region_config', '{}'::jsonb)
-on conflict (key) do nothing;
 
 -- Region routing is handled by Supabase Edge Functions. Disable the older
 -- database-trigger Telegram path if it was installed, because it used one

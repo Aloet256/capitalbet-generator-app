@@ -1,4 +1,5 @@
 import type { AppSettings } from '../types/database'
+import { DEFAULT_DSTV_PACKAGE_PRICES } from './dstv'
 
 export const SERVICE_DEFAULT_SETTING_KEYS = [
   'generator_service_technician_name',
@@ -23,11 +24,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   service_reminder_days: 5,
   dstv_reminder_days: 5,
   yaka_reminder_days: 3,
-  telegram_default_chat_id: '',
-  telegram_region_config: {},
   fuel_price_per_litre: 6500,
   branch_delete_password: '',
-  system_reset_password: 'wendy456',
+  dstv_package_prices: DEFAULT_DSTV_PACKAGE_PRICES,
   ...DEFAULT_SERVICE_SETTINGS,
 }
 

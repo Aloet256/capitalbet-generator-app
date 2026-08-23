@@ -100,7 +100,7 @@ function numberValue(value: number | null | undefined) {
 }
 
 function serviceDetailText(row: Service) {
-  return [row.items_replaced, row.repairs_done].filter(Boolean).join(' / ')
+  return row.repairs_done || row.items_replaced || ''
 }
 
 function effectiveEnd(session: PowerSession, range: PeriodRange) {
@@ -290,7 +290,7 @@ function buildBranchSheets(data: BranchReportData, period: ReportPeriod): ExcelS
     {
       name: 'Servicing',
       rows: emptyTable(
-        ['Type', 'Date', 'Next Due', 'Category', 'Technician or Handler', 'Items/Repaired Done', 'Cost UGX', 'Details', 'Remarks'],
+        ['Type', 'Date', 'Next Due', 'Category', 'Technician', 'Repair Details', 'Cost UGX', 'Work Done', 'Remarks'],
         [
           ...rows.services.map((row) => [
             'Service',
@@ -308,11 +308,11 @@ function buildBranchSheets(data: BranchReportData, period: ReportPeriod): ExcelS
             row.repair_date,
             '',
             row.category,
-            row.handled_by ?? '',
+            '',
             '',
             numberValue(row.cost),
             row.description,
-            row.remarks ?? '',
+            '',
           ]),
         ]
       ),
@@ -320,7 +320,7 @@ function buildBranchSheets(data: BranchReportData, period: ReportPeriod): ExcelS
     {
       name: 'Utilities',
       rows: emptyTable(
-        ['Type', 'Date', 'Renewal or Expected Reload', 'Identifier', 'Package or Units', 'Amount UGX', 'Receipt', 'Remarks'],
+        ['Type', 'Date', 'Renewal or Expected Reload', 'Identifier', 'Package or Units', 'Amount UGX', 'Remarks'],
         [
           ...rows.subscriptions.map((row) => [
             'DSTV',
@@ -329,7 +329,6 @@ function buildBranchSheets(data: BranchReportData, period: ReportPeriod): ExcelS
             row.smart_card_number,
             row.package,
             numberValue(row.amount),
-            row.receipt_number ?? '',
             row.remarks ?? '',
           ]),
           ...rows.purchases.map((row) => [
@@ -339,7 +338,6 @@ function buildBranchSheets(data: BranchReportData, period: ReportPeriod): ExcelS
             row.meter_number,
             numberValue(row.units),
             numberValue(row.amount),
-            row.receipt_number ?? '',
             row.remarks ?? '',
           ]),
         ]
@@ -503,7 +501,7 @@ export function buildAdminReportSheets(data: AdminReportData, period: ReportPeri
     {
       name: 'Servicing',
       rows: emptyTable(
-        ['Branch', 'Region', 'Type', 'Date', 'Next Due', 'Category', 'Technician or Handler', 'Items/Repaired Done', 'Cost UGX', 'Details', 'Remarks'],
+        ['Branch', 'Region', 'Type', 'Date', 'Next Due', 'Category', 'Technician', 'Repair Details', 'Cost UGX', 'Details', 'Remarks'],
         [
           ...data.services
             .filter((row) => inRange(localDate(row.service_date), range))
@@ -515,7 +513,7 @@ export function buildAdminReportSheets(data: AdminReportData, period: ReportPeri
             .filter((row) => inRange(localDate(row.repair_date), range))
             .map((row) => {
               const branch = branchMap.get(row.branch_id)
-              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'Repair', row.repair_date, '', row.category, row.handled_by ?? '', '', numberValue(row.cost), row.description, row.remarks ?? '']
+              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'Repair', row.repair_date, '', row.category, '', '', numberValue(row.cost), row.description, '']
             }),
         ]
       ),
@@ -523,19 +521,19 @@ export function buildAdminReportSheets(data: AdminReportData, period: ReportPeri
     {
       name: 'Utilities',
       rows: emptyTable(
-        ['Branch', 'Region', 'Type', 'Date', 'Renewal or Expected Reload', 'Identifier', 'Package or Units', 'Amount UGX', 'Receipt', 'Remarks'],
+        ['Branch', 'Region', 'Type', 'Date', 'Renewal or Expected Reload', 'Identifier', 'Package or Units', 'Amount UGX', 'Remarks'],
         [
           ...data.subscriptions
             .filter((row) => inRange(localDate(row.subscription_date), range))
             .map((row) => {
               const branch = branchMap.get(row.branch_id)
-              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'DSTV', row.subscription_date, row.renewal_date, row.smart_card_number, row.package, numberValue(row.amount), row.receipt_number ?? '', row.remarks ?? '']
+              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'DSTV', row.subscription_date, row.renewal_date, row.smart_card_number, row.package, numberValue(row.amount), row.remarks ?? '']
             }),
           ...data.purchases
             .filter((row) => inRange(localDate(row.purchase_date), range))
             .map((row) => {
               const branch = branchMap.get(row.branch_id)
-              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'Yaka', row.purchase_date, row.expected_reload_date, row.meter_number, numberValue(row.units), numberValue(row.amount), row.receipt_number ?? '', row.remarks ?? '']
+              return [branch?.name ?? 'Unknown', branch?.region ?? '', 'Yaka', row.purchase_date, row.expected_reload_date, row.meter_number, numberValue(row.units), numberValue(row.amount), row.remarks ?? '']
             }),
         ]
       ),

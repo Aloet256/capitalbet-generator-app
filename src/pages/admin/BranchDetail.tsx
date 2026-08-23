@@ -280,7 +280,7 @@ export default function BranchDetail() {
             {services.length === 0 ? (
               <p className="text-sm text-slate-400">No service records.</p>
             ) : (
-              <Table headers={['Service Date', 'Next Due', 'Technician', 'Phone', 'Company', 'Items/Repaired Done', 'Cost', 'Work Done', 'Remarks']}>
+              <Table headers={['Service Date', 'Next Due', 'Technician', 'Phone', 'Company', 'Repair Details', 'Cost Involved', 'Work Done', 'Remarks']}>
                 {services.map((s) => (
                   <tr key={s.id}>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.service_date)}</td>
@@ -288,7 +288,7 @@ export default function BranchDetail() {
                     <td className="py-2.5 pr-4 whitespace-nowrap">{s.technician_name}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{s.technician_phone}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{s.company ?? '—'}</td>
-                    <td className="py-2.5 pr-4 max-w-xs">{[s.items_replaced, s.repairs_done].filter(Boolean).join(' / ') || '-'}</td>
+                    <td className="py-2.5 pr-4 max-w-xs">{s.repairs_done || '-'}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(s.cost)}</td>
                     <td className="py-2.5 pr-4 max-w-md">{s.work_done}</td>
                     <td className="py-2.5 pr-4 max-w-sm">{s.remarks ?? '—'}</td>
@@ -303,15 +303,13 @@ export default function BranchDetail() {
             {repairs.length === 0 ? (
               <p className="text-sm text-slate-400">No repair records.</p>
             ) : (
-              <Table headers={['Date', 'Category', 'Description', 'Cost', 'Handled By', 'Remarks']}>
+              <Table headers={['Date', 'Category', 'Description', 'Repair Cost']}>
                 {repairs.map((r) => (
                   <tr key={r.id}>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(r.repair_date)}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{r.category}</td>
                     <td className="py-2.5 pr-4 max-w-md">{r.description}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(r.cost)}</td>
-                    <td className="py-2.5 pr-4 whitespace-nowrap">{r.handled_by ?? '—'}</td>
-                    <td className="py-2.5 pr-4 max-w-sm">{r.remarks ?? '—'}</td>
                   </tr>
                 ))}
               </Table>
@@ -327,7 +325,7 @@ export default function BranchDetail() {
             {subscriptions.length === 0 ? (
               <p className="text-sm text-slate-400">No DSTV records.</p>
             ) : (
-              <Table headers={['Subscribed', 'Renewal', 'Smart Card', 'Package', 'Amount', 'Receipt', 'Remarks']}>
+              <Table headers={['Subscribed', 'Renewal', 'Smart Card', 'Package', 'Amount', 'Remarks']}>
                 {subscriptions.map((s) => (
                   <tr key={s.id}>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.subscription_date)}</td>
@@ -335,7 +333,6 @@ export default function BranchDetail() {
                     <td className="py-2.5 pr-4 whitespace-nowrap">{s.smart_card_number}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{s.package}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(s.amount)}</td>
-                    <td className="py-2.5 pr-4 whitespace-nowrap">{s.receipt_number ?? '—'}</td>
                     <td className="py-2.5 pr-4 max-w-sm">{s.remarks ?? '—'}</td>
                   </tr>
                 ))}
@@ -348,7 +345,7 @@ export default function BranchDetail() {
             {purchases.length === 0 ? (
               <p className="text-sm text-slate-400">No Yaka records.</p>
             ) : (
-              <Table headers={['Purchase Date', 'Expected Reload', 'Meter', 'Units', 'Amount', 'Receipt', 'Remarks']}>
+              <Table headers={['Purchase Date', 'Expected Reload', 'Meter', 'Units', 'Amount', 'Remarks']}>
                 {purchases.map((p) => (
                   <tr key={p.id}>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(p.purchase_date)}</td>
@@ -356,7 +353,6 @@ export default function BranchDetail() {
                     <td className="py-2.5 pr-4 whitespace-nowrap">{p.meter_number}</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{p.units} kWh</td>
                     <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(p.amount)}</td>
-                    <td className="py-2.5 pr-4 whitespace-nowrap">{p.receipt_number ?? '—'}</td>
                     <td className="py-2.5 pr-4 max-w-sm">{p.remarks ?? '—'}</td>
                   </tr>
                 ))}

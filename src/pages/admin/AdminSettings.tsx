@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, KeyRound, RotateCcw, SlidersHorizontal, Send, Wrench } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, EyeOff, KeyRound, Lightbulb, Pencil, RotateCcw, Send, ShieldCheck, SlidersHorizontal, Trash2, Tv, Wrench } from 'lucide-react'
 import { useAdminAuth } from '../../context/AdminAuthContext'
 import { useAppSettings } from '../../hooks/useAppSettings'
 import { Input } from '../../components/ui/Input'
@@ -7,11 +7,24 @@ import { CurrencyInput } from '../../components/ui/CurrencyInput'
 import { Textarea } from '../../components/ui/Textarea'
 import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
+import { Badge } from '../../components/ui/Badge'
 import { runReminderSweepNow } from '../../lib/telegram'
+import { getTelegramRegionStatuses, resetTelegramRegionConfig, saveTelegramRegionConfig } from '../../lib/telegramConfig'
 import { resetSystemData } from '../../lib/systemReset'
 import { supabase } from '../../lib/supabase'
+import { DSTV_PACKAGES } from '../../lib/dstv'
 import { parseCurrencyInput } from '../../lib/utils'
-import type { AppSettings, TelegramRegionConfigEntry } from '../../types/database'
+import type { AppSettings, TelegramRegionSecretStatus } from '../../types/database'
+
+type TelegramModalMode = 'edit' | 'reset'
+
+type BranchUtilityFormRow = {
+  branch_id: string
+  name: string
+  region: string
+  dstv_smart_card_number: string
+  yaka_meter_number: string
+}
 
 export default function AdminSettings() {
   const { admin, changePassword } = useAdminAuth()
@@ -36,64 +49,107 @@ export default function AdminSettings() {
   const [regions, setRegions] = useState<string[]>([])
   const [regionLoadError, setRegionLoadError] = useState<string | null>(null)
   const [branchesMissingRegion, setBranchesMissingRegion] = useState(0)
+  const [branchUtilityRows, setBranchUtilityRows] = useState<BranchUtilityFormRow[]>([])
+  const [branchUtilityError, setBranchUtilityError] = useState<string | null>(null)
+  const [telegramStatuses, setTelegramStatuses] = useState<TelegramRegionSecretStatus[]>([])
+  const [telegramStatusLoading, setTelegramStatusLoading] = useState(false)
+  const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null)
+  const [telegramModal, setTelegramModal] = useState<{ mode: TelegramModalMode; region: string } | null>(null)
+  const [telegramPassword, setTelegramPassword] = useState('')
+  const [telegramBotToken, setTelegramBotToken] = useState('')
+  const [telegramChatId, setTelegramChatId] = useState('')
+  const [telegramSaving, setTelegramSaving] = useState(false)
+  const [telegramActionError, setTelegramActionError] = useState<string | null>(null)
+  const [telegramActionMessage, setTelegramActionMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!settingsLoading) setForm(settings)
   }, [settings, settingsLoading])
 
-  useEffect(() => {
-    let active = true
-    supabase
+  const loadBranchUtilityRows = useCallback(async () => {
+    const [{ data: branches, error: branchError }, { data: utilityRows, error: utilityError }] = await Promise.all([
+      supabase
       .from('branches')
-      .select('region')
+      .select('id, name, region')
       .eq('active', true)
       .order('region', { ascending: true })
-      .then(({ data, error }) => {
-        if (!active) return
-        if (error) {
-          setRegionLoadError(error.message)
-          return
-        }
+      .order('name', { ascending: true }),
+      supabase
+        .from('branch_utility_settings')
+        .select('branch_id, dstv_smart_card_number, yaka_meter_number'),
+    ])
 
-        const uniqueRegions = new Set<string>()
-        let missing = 0
-        for (const row of data ?? []) {
-          const region = typeof row.region === 'string' ? row.region.trim() : ''
-          if (region) uniqueRegions.add(region)
-          else missing += 1
-        }
-        setRegions([...uniqueRegions].sort((a, b) => a.localeCompare(b)))
-        setBranchesMissingRegion(missing)
-        setRegionLoadError(null)
-      })
-
-    return () => {
-      active = false
+    if (branchError) {
+      setRegionLoadError(branchError.message)
+      return
     }
+
+    if (utilityError) {
+      setBranchUtilityError(utilityError.message)
+    } else {
+      setBranchUtilityError(null)
+    }
+
+    const utilityByBranch = new Map(
+      ((utilityRows as { branch_id: string; dstv_smart_card_number: string | null; yaka_meter_number: string | null }[] | null) ?? [])
+        .map((row) => [row.branch_id, row])
+    )
+    const uniqueRegions = new Set<string>()
+    let missing = 0
+    const nextUtilityRows: BranchUtilityFormRow[] = []
+
+    for (const row of (branches as { id: string; name: string; region: string | null }[] | null) ?? []) {
+      const region = typeof row.region === 'string' ? row.region.trim() : ''
+      if (region) uniqueRegions.add(region)
+      else missing += 1
+      const utility = utilityByBranch.get(row.id)
+      nextUtilityRows.push({
+        branch_id: row.id,
+        name: row.name,
+        region: region || 'Unassigned Region',
+        dstv_smart_card_number: utility?.dstv_smart_card_number ?? '',
+        yaka_meter_number: utility?.yaka_meter_number ?? '',
+      })
+    }
+
+    setRegions([...uniqueRegions].sort((a, b) => a.localeCompare(b)))
+    setBranchesMissingRegion(missing)
+    setRegionLoadError(null)
+    setBranchUtilityRows(nextUtilityRows)
   }, [])
+
+  const loadTelegramStatuses = useCallback(async () => {
+    setTelegramStatusLoading(true)
+    setTelegramStatusError(null)
+    const res = await getTelegramRegionStatuses()
+    setTelegramStatusLoading(false)
+
+    if (res.error) {
+      setTelegramStatusError(res.error)
+      return
+    }
+    setTelegramStatuses(res.data)
+  }, [])
+
+  useEffect(() => {
+    void loadBranchUtilityRows()
+    void loadTelegramStatuses()
+  }, [loadBranchUtilityRows, loadTelegramStatuses])
+
+  const telegramStatusByRegion = useMemo(() => {
+    const map = new Map<string, TelegramRegionSecretStatus>()
+    for (const status of telegramStatuses) map.set(status.region, status)
+    return map
+  }, [telegramStatuses])
 
   const missingTelegramRegions = useMemo(
     () =>
       regions.filter((region) => {
-        const config = form.telegram_region_config[region]
-        return !config?.bot_token?.trim() || !config?.chat_id?.trim()
+        const status = telegramStatusByRegion.get(region)
+        return !status?.bot_token_configured || !status?.chat_id_configured
       }),
-    [form.telegram_region_config, regions]
+    [regions, telegramStatusByRegion]
   )
-
-  const updateTelegramRegionConfig = (region: string, field: keyof TelegramRegionConfigEntry, value: string) => {
-    const current = form.telegram_region_config[region] ?? { bot_token: '', chat_id: '' }
-    setForm({
-      ...form,
-      telegram_region_config: {
-        ...form.telegram_region_config,
-        [region]: {
-          ...current,
-          [field]: value,
-        },
-      },
-    })
-  }
 
   const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -117,6 +173,7 @@ export default function AdminSettings() {
     setSavingSettings(true)
     setSettingsSaved(false)
     setSettingsSaveError(null)
+
     for (const [key, value] of Object.entries(form) as [keyof AppSettings, AppSettings[keyof AppSettings]][]) {
       const res = await updateSetting(key, value)
       if (res.error) {
@@ -125,9 +182,34 @@ export default function AdminSettings() {
         return
       }
     }
+
+    if (branchUtilityRows.length > 0) {
+      const { error } = await supabase.from('branch_utility_settings').upsert(
+        branchUtilityRows.map((row) => ({
+          branch_id: row.branch_id,
+          dstv_smart_card_number: row.dstv_smart_card_number.trim() || null,
+          yaka_meter_number: row.yaka_meter_number.trim() || null,
+        })),
+        { onConflict: 'branch_id' }
+      )
+
+      if (error) {
+        setSettingsSaveError(error.message)
+        setSavingSettings(false)
+        return
+      }
+    }
+
     await reload()
+    await loadBranchUtilityRows()
     setSavingSettings(false)
     setSettingsSaved(true)
+  }
+
+  const updateBranchUtilityRow = (branchId: string, field: 'dstv_smart_card_number' | 'yaka_meter_number', value: string) => {
+    setBranchUtilityRows((rows) =>
+      rows.map((row) => (row.branch_id === branchId ? { ...row, [field]: value } : row))
+    )
   }
 
   const testSweep = async () => {
@@ -155,8 +237,61 @@ export default function AdminSettings() {
     setResetSuccess(true)
   }
 
+  const closeTelegramModal = () => {
+    if (telegramSaving) return
+    setTelegramModal(null)
+    setTelegramPassword('')
+    setTelegramBotToken('')
+    setTelegramChatId('')
+    setTelegramActionError(null)
+  }
+
+  const openTelegramModal = (mode: TelegramModalMode, region: string) => {
+    setTelegramModal({ mode, region })
+    setTelegramPassword('')
+    setTelegramBotToken('')
+    setTelegramChatId('')
+    setTelegramActionError(null)
+    setTelegramActionMessage(null)
+  }
+
+  const submitTelegramConfig = async () => {
+    if (!telegramModal) return
+    setTelegramSaving(true)
+    setTelegramActionError(null)
+    setTelegramActionMessage(null)
+
+    const res =
+      telegramModal.mode === 'edit'
+        ? await saveTelegramRegionConfig({
+            region: telegramModal.region,
+            botToken: telegramBotToken,
+            chatId: telegramChatId,
+            password: telegramPassword,
+          })
+        : await resetTelegramRegionConfig(telegramModal.region, telegramPassword)
+
+    setTelegramSaving(false)
+    if (res.error) {
+      setTelegramActionError(res.error)
+      return
+    }
+
+    const region = telegramModal.region
+    setTelegramModal(null)
+    setTelegramPassword('')
+    setTelegramBotToken('')
+    setTelegramChatId('')
+    setTelegramActionMessage(
+      telegramModal.mode === 'edit'
+        ? `Telegram configuration saved for ${region}.`
+        : `Telegram configuration reset for ${region}.`
+    )
+    await loadTelegramStatuses()
+  }
+
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-5xl">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Admin Settings</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">Manage your password and system-wide reminder configuration.</p>
@@ -228,50 +363,134 @@ export default function AdminSettings() {
             onChange={(e) => setForm({ ...form, branch_delete_password: e.target.value })}
             placeholder="Required before branch users can delete entries"
           />
-          <Input
-            label="System Reset Password"
-            type="password"
-            value={form.system_reset_password}
-            onChange={(e) => setForm({ ...form, system_reset_password: e.target.value })}
-            placeholder="Required before the admin reset can run"
-          />
+
+          <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
+            <div className="flex items-center gap-2">
+              <Tv size={16} className="text-brand-600" />
+              <h4 className="font-semibold text-slate-800 dark:text-slate-100">DSTV Package Prices</h4>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">These values fill the branch DSTV payment form; users can still choose Other amount.</p>
+          </div>
+
+          {DSTV_PACKAGES.map((pkg) => (
+            <CurrencyInput
+              key={pkg}
+              label={`${pkg} (UGX)`}
+              min="0"
+              value={form.dstv_package_prices[pkg]}
+              onValueChange={(amount) =>
+                setForm({
+                  ...form,
+                  dstv_package_prices: {
+                    ...form.dstv_package_prices,
+                    [pkg]: parseCurrencyInput(amount),
+                  },
+                })
+              }
+            />
+          ))}
+
+          <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
+            <div className="flex items-center gap-2">
+              <Lightbulb size={16} className="text-brand-600" />
+              <h4 className="font-semibold text-slate-800 dark:text-slate-100">Branch Utility Numbers</h4>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Saved numbers are reused by branch forms so users do not repeat fixed branch information.</p>
+          </div>
+
+          {branchUtilityError && (
+            <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/10 dark:text-amber-300">
+              {branchUtilityError}
+            </div>
+          )}
+
+          <div className="sm:col-span-2 space-y-3">
+            {branchUtilityRows.length === 0 ? (
+              <p className="text-sm text-slate-400">No active branches found.</p>
+            ) : (
+              branchUtilityRows.map((row) => (
+                <div key={row.branch_id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                  <div className="mb-3">
+                    <h5 className="font-semibold text-slate-800 dark:text-slate-100">{row.name}</h5>
+                    <p className="text-xs text-slate-400">{row.region}</p>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <Input
+                      label="DSTV Smart Card Number"
+                      value={row.dstv_smart_card_number}
+                      onChange={(e) => updateBranchUtilityRow(row.branch_id, 'dstv_smart_card_number', e.target.value)}
+                    />
+                    <Input
+                      label="Yaka Meter Number"
+                      value={row.yaka_meter_number}
+                      onChange={(e) => updateBranchUtilityRow(row.branch_id, 'yaka_meter_number', e.target.value)}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
           <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
             <div className="flex items-center gap-2">
               <Send size={16} className="text-brand-600" />
               <h4 className="font-semibold text-slate-800 dark:text-slate-100">Telegram Configuration by Region</h4>
             </div>
-            <p className="text-xs text-slate-400 mt-1">Branch alerts are sent only to the Telegram group configured for that branch region.</p>
+            <p className="text-xs text-slate-400 mt-1">Branch alerts are sent only to the encrypted Telegram destination configured for that branch region.</p>
           </div>
 
-          {(regionLoadError || branchesMissingRegion > 0 || missingTelegramRegions.length > 0) && (
+          {(regionLoadError || telegramStatusError || branchesMissingRegion > 0 || missingTelegramRegions.length > 0) && (
             <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/10 dark:text-amber-300">
               {regionLoadError && <p>{regionLoadError}</p>}
+              {telegramStatusError && <p>{telegramStatusError}</p>}
               {branchesMissingRegion > 0 && <p>{branchesMissingRegion} branch(es) do not have a region assigned.</p>}
               {missingTelegramRegions.length > 0 && <p>Missing Telegram configuration for: {missingTelegramRegions.join(', ')}.</p>}
             </div>
           )}
 
           <div className="sm:col-span-2 space-y-3">
-            {regions.length === 0 && !regionLoadError ? (
+            {telegramActionMessage && <p className="text-sm text-emerald-600">{telegramActionMessage}</p>}
+            {telegramStatusLoading ? (
+              <p className="text-sm text-slate-400">Checking encrypted Telegram configuration...</p>
+            ) : regions.length === 0 && !regionLoadError ? (
               <p className="text-sm text-slate-400">No active branch regions found.</p>
             ) : (
               regions.map((region) => {
-                const config = form.telegram_region_config[region] ?? { bot_token: '', chat_id: '' }
+                const status = telegramStatusByRegion.get(region)
+                const configured = Boolean(status?.bot_token_configured && status?.chat_id_configured)
                 return (
                   <div key={region} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-                    <h5 className="font-semibold text-slate-800 dark:text-slate-100 mb-3">{region}</h5>
-                    <div className="grid sm:grid-cols-2 gap-3">
-                      <Input
-                        label="Bot Token"
-                        type="password"
-                        value={config.bot_token}
-                        onChange={(e) => updateTelegramRegionConfig(region, 'bot_token', e.target.value)}
-                      />
-                      <Input
-                        label="Chat ID"
-                        value={config.chat_id}
-                        onChange={(e) => updateTelegramRegionConfig(region, 'chat_id', e.target.value)}
-                      />
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h5 className="font-semibold text-slate-800 dark:text-slate-100">{region}</h5>
+                          <Badge tone={configured ? 'green' : 'amber'}>{configured ? 'Configured' : 'Missing setup'}</Badge>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+                          <div className="flex items-center gap-2">
+                            <EyeOff size={15} className="text-slate-400" />
+                            <span>Bot token</span>
+                            <Badge tone={status?.bot_token_configured ? 'green' : 'red'}>
+                              {status?.bot_token_configured ? 'Hidden' : 'Missing'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <EyeOff size={15} className="text-slate-400" />
+                            <span>Chat ID</span>
+                            <Badge tone={status?.chat_id_configured ? 'green' : 'red'}>
+                              {status?.chat_id_configured ? 'Hidden' : 'Missing'}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 sm:justify-end">
+                        <Button variant="secondary" type="button" onClick={() => openTelegramModal('edit', region)}>
+                          <Pencil size={15} /> {configured ? 'Edit' : 'Configure'}
+                        </Button>
+                        <Button variant="danger" type="button" onClick={() => openTelegramModal('reset', region)} disabled={!configured}>
+                          <Trash2 size={15} /> Reset
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -359,10 +578,71 @@ export default function AdminSettings() {
         </div>
       </div>
 
+      <Modal open={Boolean(telegramModal)} onClose={closeTelegramModal} title={telegramModal?.mode === 'reset' ? 'Reset Telegram configuration' : 'Edit Telegram configuration'}>
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+            <ShieldCheck size={18} className="mt-0.5 shrink-0 text-brand-600" />
+            <p>
+              {telegramModal?.mode === 'reset'
+                ? `This removes the encrypted Telegram destination for ${telegramModal.region}.`
+                : `Enter new values for ${telegramModal?.region}. Saved values are encrypted and will not be shown again.`}
+            </p>
+          </div>
+
+          {telegramModal?.mode === 'edit' && (
+            <div className="grid gap-3">
+              <Input
+                label="Bot Token"
+                type="password"
+                autoComplete="new-password"
+                value={telegramBotToken}
+                onChange={(e) => setTelegramBotToken(e.target.value)}
+              />
+              <Input
+                label="Chat ID"
+                type="password"
+                autoComplete="new-password"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+              />
+            </div>
+          )}
+
+          <Input
+            label="Reset Password"
+            type="password"
+            autoFocus={telegramModal?.mode === 'reset'}
+            autoComplete="current-password"
+            value={telegramPassword}
+            onChange={(e) => setTelegramPassword(e.target.value)}
+            onKeyDown={(e) => {
+              const ready = telegramPassword && (telegramModal?.mode === 'reset' || (telegramBotToken && telegramChatId))
+              if (e.key === 'Enter' && ready && !telegramSaving) void submitTelegramConfig()
+            }}
+          />
+          {telegramActionError && <p className="text-sm text-red-500">{telegramActionError}</p>}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={closeTelegramModal} disabled={telegramSaving}>
+              Cancel
+            </Button>
+            <Button
+              variant={telegramModal?.mode === 'reset' ? 'danger' : 'primary'}
+              onClick={() => void submitTelegramConfig()}
+              disabled={telegramSaving || !telegramPassword || (telegramModal?.mode === 'edit' && (!telegramBotToken || !telegramChatId))}
+            >
+              {telegramSaving ? 'Saving...' : telegramModal?.mode === 'reset' ? 'Reset Configuration' : 'Save Configuration'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal
         open={resetModalOpen}
         onClose={() => {
-          if (!resetting) setResetModalOpen(false)
+          if (!resetting) {
+            setResetModalOpen(false)
+            setResetPassword('')
+          }
         }}
         title="Reset system data"
       >
@@ -385,7 +665,10 @@ export default function AdminSettings() {
             <Button
               variant="secondary"
               onClick={() => {
-                if (!resetting) setResetModalOpen(false)
+                if (!resetting) {
+                  setResetModalOpen(false)
+                  setResetPassword('')
+                }
               }}
               disabled={resetting}
             >

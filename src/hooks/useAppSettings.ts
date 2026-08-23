@@ -2,13 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { AppSettings } from '../types/database'
 import { coerceTextSetting, DEFAULT_APP_SETTINGS } from '../lib/appSettings'
+import { coerceDstvPackagePrices } from '../lib/dstv'
 
 function coerceSettingValue(key: keyof AppSettings, value: unknown): AppSettings[keyof AppSettings] {
   const defaultValue = DEFAULT_APP_SETTINGS[key]
   if (typeof defaultValue === 'number') return Number(value)
-  if (defaultValue && typeof defaultValue === 'object' && !Array.isArray(defaultValue)) {
-    return (value && typeof value === 'object' && !Array.isArray(value) ? value : defaultValue) as AppSettings[keyof AppSettings]
-  }
+  if (key === 'dstv_package_prices') return coerceDstvPackagePrices(value)
   return coerceTextSetting(value)
 }
 

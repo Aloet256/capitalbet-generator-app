@@ -15,12 +15,10 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-interface TelegramRegionConfigEntry {
+interface TelegramDestination {
   bot_token?: string
   chat_id?: string
 }
-
-type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -68,11 +66,6 @@ async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return (data?.value as T) ?? fallback
 }
 
-async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
-  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
-  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
-}
-
 async function isAuthorized(req: Request): Promise<boolean> {
   const header = req.headers.get('Authorization') ?? ''
   const token = header.replace(/^Bearer\s+/i, '').trim()
@@ -101,6 +94,23 @@ async function recordAdminWarning(message: string) {
   if (error) console.error('Failed to record Telegram configuration warning', error)
 }
 
+async function getEncryptedRegionDestination(region: string): Promise<{ botToken: string; chatId: string } | null> {
+  const { data, error } = await supabase
+    .rpc('fn_get_telegram_region_destination', { p_region: region })
+    .maybeSingle()
+
+  if (error) {
+    console.error('Failed to load encrypted Telegram destination', error)
+    return null
+  }
+
+  const destination = data as TelegramDestination | null
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) return null
+  return { botToken, chatId }
+}
+
 async function getRegionDestination(
   branch: { name?: string | null; region?: string | null } | null,
   reminderType: string,
@@ -112,16 +122,13 @@ async function getRegionDestination(
     return null
   }
 
-  const config = await getTelegramRegionConfig()
-  const destination = config[region]
-  const botToken = destination?.bot_token?.trim() ?? ''
-  const chatId = destination?.chat_id?.trim() ?? ''
-  if (!botToken || !chatId) {
+  const destination = await getEncryptedRegionDestination(region)
+  if (!destination) {
     await recordAdminWarning(`Telegram skipped for ${reminderType} at ${branchName} (${region}). Configure bot token and chat ID for ${region}.`)
     return null
   }
 
-  return { botToken, chatId }
+  return destination
 }
 
 async function sendTelegram(botToken: string, chatId: string, text: string): Promise<boolean> {

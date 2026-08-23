@@ -58,6 +58,7 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
   const { services, addService, deleteService } = useServices(branchId)
   const { defaults, loading: defaultsLoading } = useServiceDefaults()
   const [servicedConfirmed, setServicedConfirmed] = useState(false)
+  const [repairPerformed, setRepairPerformed] = useState<boolean | null>(null)
   const [serviceDetails, setServiceDetails] = useState('')
   const [serviceCost, setServiceCost] = useState('')
   const [saving, setSaving] = useState(false)
@@ -84,15 +85,25 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
       return
     }
 
+    if (repairPerformed === null) {
+      setError('Select whether any repairs were performed during servicing.')
+      return
+    }
+
+    if (repairPerformed && !serviceDetails.trim()) {
+      setError('Repair details are required when repairs were performed.')
+      return
+    }
+
     setSaving(true)
 
     const res = await addService({
       technician_name: settingText(defaults.generator_service_technician_name, 'Mr Kawesi'),
       technician_phone: settingText(defaults.generator_service_technician_phone, 'N/A'),
       company: defaults.generator_service_company.trim() || null,
-      cost: serviceCost ? parseCurrencyInput(serviceCost) : null,
+      cost: repairPerformed && serviceCost ? parseCurrencyInput(serviceCost) : null,
       items_replaced: null,
-      repairs_done: serviceDetails.trim() || null,
+      repairs_done: repairPerformed ? serviceDetails.trim() : 'No repairs performed',
       work_done: settingText(defaults.generator_service_work_done, 'Servicing Generator'),
       remarks: settingText(defaults.generator_service_remarks, 'Servicing Generator'),
     })
@@ -103,6 +114,7 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
       return
     }
     setServicedConfirmed(false)
+    setRepairPerformed(null)
     setServiceDetails('')
     setServiceCost('')
     setSuccess(`Generator service recorded for ${formatDate(toLocalDateInput())}.`)
@@ -126,18 +138,56 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
           <span className="mx-auto">CLICK HERE IF GENERATOR HAS BEEN SERVICED</span>
           {servicedConfirmed && <CheckCircle2 className="absolute right-5" size={24} />}
         </Button>
-        <div className="grid w-full max-w-2xl gap-3 sm:grid-cols-2">
-          <Input
-            label="ANY ITEMS REPLACED / ANY REPAIRS DONE"
-            value={serviceDetails}
-            onChange={(event) => setServiceDetails(event.target.value)}
-          />
-          <CurrencyInput
-            label="COST"
-            min="0"
-            value={serviceCost}
-            onValueChange={setServiceCost}
-          />
+        <div className="w-full max-w-2xl space-y-3 text-left">
+          <div>
+            <p className="label">Were repairs performed?</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setRepairPerformed(true)}
+                className={cn(
+                  'rounded-xl border px-4 py-3 text-sm font-semibold transition',
+                  repairPerformed === true
+                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                    : 'border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-800 dark:text-slate-300'
+                )}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRepairPerformed(false)
+                  setServiceDetails('')
+                  setServiceCost('')
+                }}
+                className={cn(
+                  'rounded-xl border px-4 py-3 text-sm font-semibold transition',
+                  repairPerformed === false
+                    ? 'border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-950/30 dark:text-brand-300'
+                    : 'border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-800 dark:text-slate-300'
+                )}
+              >
+                No
+              </button>
+            </div>
+          </div>
+
+          {repairPerformed && (
+            <div className="grid gap-3">
+              <Textarea
+                label="Repair Details"
+                value={serviceDetails}
+                onChange={(event) => setServiceDetails(event.target.value)}
+              />
+              <CurrencyInput
+                label="Cost Involved (UGX)"
+                min="0"
+                value={serviceCost}
+                onValueChange={setServiceCost}
+              />
+            </div>
+          )}
         </div>
         <Button
           type="button"
@@ -153,7 +203,7 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
       {services.length === 0 ? (
         <EmptyState title="No servicing records yet" />
       ) : (
-        <Table headers={['Service Date', 'Technician', 'Company', 'Items/Repaired Done', 'Cost', 'Next Due', 'Status', 'Work Done', '']}>
+          <Table headers={['Service Date', 'Technician', 'Company', 'Repair Details', 'Cost Involved', 'Next Due', 'Status', 'Work Done', '']}>
           {services.map((s) => {
             const days = daysUntil(s.next_service_date)
             return (
@@ -161,7 +211,7 @@ function ServicingTab({ branchId }: { branchId: string | null }) {
                 <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.service_date)}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">{s.technician_name}<br /><span className="text-xs text-slate-400">{s.technician_phone}</span></td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">{s.company ?? '—'}</td>
-                <td className="py-2.5 pr-4 max-w-xs truncate">{[s.items_replaced, s.repairs_done].filter(Boolean).join(' / ') || '-'}</td>
+                <td className="py-2.5 pr-4 max-w-xs truncate">{s.repairs_done || '-'}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">{formatUGX(s.cost)}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(s.next_service_date)}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">
@@ -189,26 +239,27 @@ function RepairsTab({ branchId }: { branchId: string | null }) {
     category: 'Generator',
     description: '',
     cost: '',
-    handled_by: '',
-    remarks: '',
   })
 
   const submit = async () => {
     setError(null)
+    const cost = parseCurrencyInput(form.cost)
+    if (cost <= 0) {
+      setError('Repair cost is required.')
+      return
+    }
     const res = await addRepair({
       repair_date: form.repair_date,
       category: form.category as any,
       description: form.description,
-      cost: form.cost ? parseCurrencyInput(form.cost) : null,
-      handled_by: form.handled_by || null,
-      remarks: form.remarks || null,
+      cost,
     })
     if (res.error) {
       setError(res.error)
       return
     }
     setOpen(false)
-    setForm({ repair_date: toLocalDateInput(), category: 'Generator', description: '', cost: '', handled_by: '', remarks: '' })
+    setForm({ repair_date: toLocalDateInput(), category: 'Generator', description: '', cost: '' })
   }
 
   return (
@@ -222,14 +273,13 @@ function RepairsTab({ branchId }: { branchId: string | null }) {
       {repairs.length === 0 ? (
         <EmptyState title="No repairs recorded yet" />
       ) : (
-        <Table headers={['Date', 'Category', 'Description', 'Cost', 'Handled By', '']}>
+        <Table headers={['Date', 'Category', 'Description', 'Repair Cost', '']}>
           {repairs.map((r) => (
             <tr key={r.id}>
               <td className="py-2.5 pr-4 whitespace-nowrap">{formatDate(r.repair_date)}</td>
               <td className="py-2.5 pr-4 whitespace-nowrap"><Badge>{r.category}</Badge></td>
               <td className="py-2.5 pr-4 max-w-xs truncate">{r.description}</td>
               <td className="py-2.5 pr-4 whitespace-nowrap">{r.cost ? formatUGX(r.cost) : '—'}</td>
-              <td className="py-2.5 pr-4 whitespace-nowrap">{r.handled_by ?? '—'}</td>
               <td className="py-2.5 pr-4 whitespace-nowrap text-right">
                 <DeleteEntryButton label="repair record" onDelete={(password) => deleteRepair(r.id, password)} />
               </td>
@@ -250,11 +300,7 @@ function RepairsTab({ branchId }: { branchId: string | null }) {
             />
           </div>
           <Textarea label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <div className="grid sm:grid-cols-2 gap-4">
-            <CurrencyInput label="Cost (optional)" min="0" value={form.cost} onValueChange={(cost) => setForm({ ...form, cost })} />
-            <Input label="Handled By (optional)" value={form.handled_by} onChange={(e) => setForm({ ...form, handled_by: e.target.value })} />
-          </div>
-          <Textarea label="Remarks (optional)" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
+          <CurrencyInput label="Repair Cost (UGX)" min="0" value={form.cost} onValueChange={(cost) => setForm({ ...form, cost })} />
           {error && <p className="text-sm text-red-500">{error}</p>}
           <Button className="w-full" onClick={submit}>Save Repair Record</Button>
         </div>

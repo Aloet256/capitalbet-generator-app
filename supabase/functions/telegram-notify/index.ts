@@ -33,12 +33,10 @@ interface NotifyPayload {
   details?: Record<string, unknown>
 }
 
-interface TelegramRegionConfigEntry {
+interface TelegramDestination {
   bot_token?: string
   chat_id?: string
 }
-
-type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -90,16 +88,6 @@ function telegramMessage(title: string, icon: string, lines: string[]): string {
   return [`<b>${todayLabel()}</b>`, '', `${icon} <b>${title}</b>`, '', ...lines].join('\n')
 }
 
-async function getSetting<T>(key: string, fallback: T): Promise<T> {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
-  return (data?.value as T) ?? fallback
-}
-
-async function getTelegramRegionConfig(): Promise<TelegramRegionConfig> {
-  const config = await getSetting<TelegramRegionConfig>('telegram_region_config', {})
-  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
-}
-
 async function getBranch(branchId?: string) {
   if (!branchId) return null
   const { data, error } = await supabase
@@ -127,6 +115,23 @@ async function recordAdminWarning(message: string) {
   if (error) console.error('Failed to record Telegram configuration warning', error)
 }
 
+async function getEncryptedRegionDestination(region: string): Promise<{ botToken: string; chatId: string } | null> {
+  const { data, error } = await supabase
+    .rpc('fn_get_telegram_region_destination', { p_region: region })
+    .maybeSingle()
+
+  if (error) {
+    console.error('Failed to load encrypted Telegram destination', error)
+    return null
+  }
+
+  const destination = data as TelegramDestination | null
+  const botToken = destination?.bot_token?.trim() ?? ''
+  const chatId = destination?.chat_id?.trim() ?? ''
+  if (!botToken || !chatId) return null
+  return { botToken, chatId }
+}
+
 async function getRegionDestination(
   branch: { name: string | null; region: string | null } | null,
   type: TelegramEventType,
@@ -138,16 +143,13 @@ async function getRegionDestination(
     return null
   }
 
-  const config = await getTelegramRegionConfig()
-  const destination = config[region]
-  const botToken = destination?.bot_token?.trim() ?? ''
-  const chatId = destination?.chat_id?.trim() ?? ''
-  if (!botToken || !chatId) {
+  const destination = await getEncryptedRegionDestination(region)
+  if (!destination) {
     await recordAdminWarning(`Telegram skipped for ${eventLabel(type)} at ${branchName} (${region}). Configure bot token and chat ID for ${region}.`)
     return null
   }
 
-  return { botToken, chatId }
+  return destination
 }
 
 async function isAdminToken(token: string): Promise<boolean> {
@@ -250,7 +252,6 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         detailLine('🏷️', 'Category', value(details, 'category')),
         detailLine('🧾', 'Description', value(details, 'description')),
         detailLine('💰', 'Cost', money(details.cost)),
-        detailLine('👤', 'Handled by', value(details, 'handled_by')),
       ])
 
     case 'dstv_subscription':
@@ -260,7 +261,7 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         detailLine('📦', 'Package', value(details, 'package')),
         detailLine('💳', 'Smart card', value(details, 'smart_card_number')),
         detailLine('💰', 'Amount', money(details.amount)),
-        detailLine('🧾', 'Receipt', value(details, 'receipt_number')),
+        detailLine('📝', 'Remarks', value(details, 'remarks')),
       ])
 
     case 'yaka_purchase':
@@ -271,7 +272,7 @@ function buildMessage(payload: NotifyPayload, branch: { name: string | null; reg
         detailLine('🔢', 'Meter', value(details, 'meter_number')),
         detailLine('⚡', 'Units', value(details, 'units')),
         detailLine('💰', 'Amount', money(details.amount)),
-        detailLine('🧾', 'Receipt', value(details, 'receipt_number')),
+        detailLine('📝', 'Remarks', value(details, 'remarks')),
       ])
   }
 }

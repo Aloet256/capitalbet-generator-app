@@ -8,13 +8,10 @@ import { useRealtimeRefresh } from '../lib/realtime'
 
 export const REPAIR_CATEGORIES: RepairCategory[] = [
   'Generator',
-  'Wiring/Electrical',
-  'Fuel System',
-  'Battery',
-  'Cooling System',
-  'Control Panel',
-  'Structural',
-  'Other',
+  'TV',
+  'Electricity',
+  'Printer',
+  'Computer',
 ]
 
 export function useRepairs(branchId: string | null) {

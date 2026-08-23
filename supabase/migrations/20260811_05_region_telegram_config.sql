@@ -17,10 +17,6 @@ begin
   end if;
 end $$;
 
-insert into app_settings (key, value)
-values ('telegram_region_config', '{}'::jsonb)
-on conflict (key) do nothing;
-
 -- Region routing is handled by Supabase Edge Functions. Disable the older
 -- database-trigger Telegram path if it was installed, because it used one
 -- global destination instead of branch-region routing.

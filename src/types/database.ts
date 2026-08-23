@@ -1,14 +1,7 @@
 export type DeviceStatus = 'pending' | 'approved' | 'revoked'
 export type DstvPackage = 'Access' | 'Family' | 'Compact' | 'Compact Plus' | 'Premium'
-export type RepairCategory =
-  | 'Generator'
-  | 'Wiring/Electrical'
-  | 'Fuel System'
-  | 'Battery'
-  | 'Cooling System'
-  | 'Control Panel'
-  | 'Structural'
-  | 'Other'
+export type DstvPackagePrices = Record<DstvPackage, number>
+export type RepairCategory = 'Generator' | 'TV' | 'Electricity' | 'Printer' | 'Computer'
 
 export type NotificationType =
   | 'service_due'
@@ -25,7 +18,6 @@ export interface Branch {
   name: string
   region: string
   code: string | null
-  telegram_chat_id: string | null
   active: boolean
   created_at: string
 }
@@ -102,8 +94,6 @@ export interface Repair {
   category: RepairCategory
   description: string
   cost: number | null
-  handled_by: string | null
-  remarks: string | null
   created_by_device: string | null
   created_at: string
 }
@@ -116,7 +106,6 @@ export interface DstvSubscription {
   smart_card_number: string
   package: DstvPackage
   amount: number
-  receipt_number: string | null
   remarks: string | null
   reminder_sent: boolean
   created_by_device: string | null
@@ -131,11 +120,18 @@ export interface YakaPurchase {
   units: number
   amount: number
   expected_reload_date: string
-  receipt_number: string | null
   remarks: string | null
   reminder_sent: boolean
   created_by_device: string | null
   created_at: string
+}
+
+export interface BranchUtilitySettings {
+  branch_id: string
+  dstv_smart_card_number: string | null
+  yaka_meter_number: string | null
+  updated_at: string
+  updated_by: string | null
 }
 
 export interface AppNotification {
@@ -165,22 +161,20 @@ export interface AuditLog {
   created_at: string
 }
 
-export interface TelegramRegionConfigEntry {
-  bot_token: string
-  chat_id: string
+export interface TelegramRegionSecretStatus {
+  region: string
+  bot_token_configured: boolean
+  chat_id_configured: boolean
+  updated_at: string | null
 }
-
-export type TelegramRegionConfig = Record<string, TelegramRegionConfigEntry>
 
 export interface AppSettings {
   service_reminder_days: number
   dstv_reminder_days: number
   yaka_reminder_days: number
-  telegram_default_chat_id: string
-  telegram_region_config: TelegramRegionConfig
   fuel_price_per_litre: number
   branch_delete_password: string
-  system_reset_password: string
+  dstv_package_prices: DstvPackagePrices
   generator_service_technician_name: string
   generator_service_technician_phone: string
   generator_service_company: string

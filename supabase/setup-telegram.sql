@@ -1,6 +1,6 @@
--- Sets the default Telegram group/channel used by reminder and live-entry messages.
--- Keep the bot token in Supabase Edge Function secrets, not in SQL or frontend code.
-
-insert into app_settings (key, value)
-values ('telegram_default_chat_id', '"-1003743501704"'::jsonb)
-on conflict (key) do update set value = excluded.value;
+-- Deprecated.
+-- Telegram destinations are now configured per region in Admin Settings and
+-- stored encrypted in telegram_region_secrets.
+--
+-- Apply supabase/migrations/20260811_06_private_telegram_secrets.sql, then use
+-- Admin Settings -> Telegram Configuration by Region.

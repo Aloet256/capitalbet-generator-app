@@ -25,7 +25,6 @@ create table branches (
   name text not null,
   region text not null check (btrim(region) <> ''),
   code text, -- legacy/reference value from the branch list; not necessarily unique
-  telegram_chat_id text, -- optional per-branch Telegram chat/group id
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -85,15 +84,43 @@ insert into app_settings (key, value) values
   ('service_reminder_days', '5'),
   ('dstv_reminder_days', '5'),
   ('yaka_reminder_days', '3'),
-  ('telegram_default_chat_id', '"-1003743501704"'),
-  ('telegram_region_config', '{}'::jsonb),
   ('fuel_price_per_litre', '6500'),
-  ('system_reset_password', '"wendy456"'),
+  ('dstv_package_prices', '{"Access":49000,"Family":76000,"Compact":120000,"Compact Plus":185000,"Premium":320000}'::jsonb),
   ('generator_service_technician_name', '"Mr Kawesi"'),
   ('generator_service_technician_phone', '"N/A"'),
   ('generator_service_company', '""'),
   ('generator_service_work_done', '"Servicing Generator"'),
   ('generator_service_remarks', '"Servicing Generator"');
+
+create table app_private_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+insert into app_private_settings (key, value) values
+  (
+    'system_reset_password_hash',
+    '{"salt":"98a211a38700a6209f5d4a64e7e73f7c","hash":"27c1e5492885091df7c929c48235bee1ec56ccc28c0e6dd98da3559c8b3601db"}'::jsonb
+  ),
+  ('telegram_secret_key', to_jsonb(encode(gen_random_bytes(32), 'hex')));
+
+create table telegram_region_secrets (
+  region text primary key check (btrim(region) <> ''),
+  bot_token_ciphertext bytea not null,
+  chat_id_ciphertext bytea not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  updated_by uuid references admins(id)
+);
+
+create table branch_utility_settings (
+  branch_id uuid primary key references branches(id) on delete cascade,
+  dstv_smart_card_number text,
+  yaka_meter_number text,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references admins(id)
+);
 
 -- ---------------------------------------------------------
 -- POWER SESSIONS (outage tracking: power off -> power back)
@@ -164,8 +191,7 @@ create index idx_services_next_due on services(next_service_date);
 -- REPAIRS (categorized history, no reminders)
 -- ---------------------------------------------------------
 create type repair_category as enum (
-  'Generator', 'Wiring/Electrical', 'Fuel System', 'Battery',
-  'Cooling System', 'Control Panel', 'Structural', 'Other'
+  'Generator', 'TV', 'Electricity', 'Printer', 'Computer'
 );
 
 create table repairs (
@@ -175,8 +201,6 @@ create table repairs (
   category repair_category not null,
   description text not null,
   cost numeric(12,2) check (cost >= 0),
-  handled_by text,
-  remarks text,
   created_by_device uuid references devices(id),
   created_at timestamptz not null default now()
 );
@@ -194,7 +218,6 @@ create table dstv_subscriptions (
   smart_card_number text not null,
   package dstv_package not null,
   amount numeric(12,2) not null check (amount >= 0),
-  receipt_number text,
   remarks text,
   reminder_sent boolean not null default false,
   created_by_device uuid references devices(id),
@@ -214,7 +237,6 @@ create table yaka_purchases (
   units numeric(10,2) not null check (units >= 0),
   amount numeric(12,2) not null check (amount >= 0),
   expected_reload_date date generated always as (((purchase_date + interval '1 month')::date)) stored,
-  receipt_number text,
   remarks text,
   reminder_sent boolean not null default false,
   created_by_device uuid references devices(id),
@@ -348,6 +370,10 @@ create trigger trg_touch_settings
 before update on app_settings
 for each row execute function fn_touch_settings();
 
+create trigger trg_touch_branch_utility_settings
+before update on branch_utility_settings
+for each row execute function fn_touch_settings();
+
 -- =========================================================
 -- ROW LEVEL SECURITY
 -- =========================================================
@@ -467,20 +493,38 @@ $$ language plpgsql security definer set search_path = public;
 
 grant execute on function fn_delete_branch_entry(text, uuid, text) to anon, authenticated;
 
+create or replace function fn_verify_admin_action_password(p_password text)
+returns boolean as $$
+declare
+  v_secret jsonb;
+  v_salt text;
+  v_hash text;
+begin
+  select value into v_secret
+  from app_private_settings
+  where key = 'system_reset_password_hash';
+
+  v_salt := coalesce(v_secret ->> 'salt', '');
+  v_hash := coalesce(v_secret ->> 'hash', '');
+
+  if v_salt = '' or v_hash = '' then
+    return false;
+  end if;
+
+  return encode(digest(coalesce(p_password, '') || v_salt, 'sha256'), 'hex') = v_hash;
+end;
+$$ language plpgsql security definer set search_path = public, extensions;
+
+revoke all on function fn_verify_admin_action_password(text) from public, anon, authenticated;
+
 create or replace function fn_reset_system_data(p_password text)
 returns void as $$
-declare
-  v_reset_password text;
 begin
   if not fn_is_admin() then
     raise exception 'Only an authenticated admin can reset system data.';
   end if;
 
-  select value #>> '{}' into v_reset_password
-  from app_settings
-  where key = 'system_reset_password';
-
-  if coalesce(v_reset_password, '') = '' or coalesce(p_password, '') <> v_reset_password then
+  if not fn_verify_admin_action_password(p_password) then
     raise exception 'Incorrect reset password. System data was not reset.';
   end if;
 
@@ -497,6 +541,158 @@ end;
 $$ language plpgsql security definer set search_path = public;
 
 grant execute on function fn_reset_system_data(text) to authenticated;
+
+create or replace function fn_update_telegram_region_config(
+  p_region text,
+  p_bot_token text,
+  p_chat_id text,
+  p_password text
+)
+returns void as $$
+declare
+  v_region text := btrim(coalesce(p_region, ''));
+  v_bot_token text := btrim(coalesce(p_bot_token, ''));
+  v_chat_id text := btrim(coalesce(p_chat_id, ''));
+  v_secret_key text;
+  v_admin_id uuid;
+begin
+  if not fn_is_admin() then
+    raise exception 'Only an authenticated admin can update Telegram configuration.';
+  end if;
+
+  if not fn_verify_admin_action_password(p_password) then
+    raise exception 'Incorrect reset password. Telegram configuration was not changed.';
+  end if;
+
+  if v_region = '' then
+    raise exception 'Region is required.';
+  end if;
+
+  if v_bot_token = '' or v_chat_id = '' then
+    raise exception 'Bot token and chat ID are required.';
+  end if;
+
+  select value #>> '{}' into v_secret_key
+  from app_private_settings
+  where key = 'telegram_secret_key';
+
+  if coalesce(v_secret_key, '') = '' then
+    raise exception 'Telegram encryption key is not configured.';
+  end if;
+
+  select id into v_admin_id
+  from admins
+  where auth_user_id = auth.uid()
+  limit 1;
+
+  insert into telegram_region_secrets (
+    region,
+    bot_token_ciphertext,
+    chat_id_ciphertext,
+    updated_by
+  )
+  values (
+    v_region,
+    pgp_sym_encrypt(v_bot_token, v_secret_key),
+    pgp_sym_encrypt(v_chat_id, v_secret_key),
+    v_admin_id
+  )
+  on conflict (region) do update
+  set bot_token_ciphertext = excluded.bot_token_ciphertext,
+      chat_id_ciphertext = excluded.chat_id_ciphertext,
+      updated_at = now(),
+      updated_by = excluded.updated_by;
+end;
+$$ language plpgsql security definer set search_path = public, extensions;
+
+grant execute on function fn_update_telegram_region_config(text, text, text, text) to authenticated;
+
+create or replace function fn_reset_telegram_region_config(p_region text, p_password text)
+returns void as $$
+declare
+  v_region text := btrim(coalesce(p_region, ''));
+begin
+  if not fn_is_admin() then
+    raise exception 'Only an authenticated admin can reset Telegram configuration.';
+  end if;
+
+  if not fn_verify_admin_action_password(p_password) then
+    raise exception 'Incorrect reset password. Telegram configuration was not reset.';
+  end if;
+
+  if v_region = '' then
+    raise exception 'Region is required.';
+  end if;
+
+  delete from telegram_region_secrets where region = v_region;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+grant execute on function fn_reset_telegram_region_config(text, text) to authenticated;
+
+create or replace function fn_get_telegram_region_status()
+returns table (
+  region text,
+  bot_token_configured boolean,
+  chat_id_configured boolean,
+  updated_at timestamptz
+) as $$
+begin
+  if not fn_is_admin() then
+    raise exception 'Only an authenticated admin can view Telegram configuration status.';
+  end if;
+
+  return query
+  with active_regions as (
+    select distinct btrim(branches.region) as region
+    from branches
+    where branches.active = true
+      and btrim(branches.region) <> ''
+  )
+  select
+    active_regions.region,
+    telegram_region_secrets.region is not null
+      and octet_length(telegram_region_secrets.bot_token_ciphertext) > 0,
+    telegram_region_secrets.region is not null
+      and octet_length(telegram_region_secrets.chat_id_ciphertext) > 0,
+    telegram_region_secrets.updated_at
+  from active_regions
+  left join telegram_region_secrets
+    on telegram_region_secrets.region = active_regions.region
+  order by active_regions.region;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+grant execute on function fn_get_telegram_region_status() to authenticated;
+
+create or replace function fn_get_telegram_region_destination(p_region text)
+returns table (bot_token text, chat_id text) as $$
+declare
+  v_secret_key text;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception 'Only the service role can read Telegram destinations.';
+  end if;
+
+  select value #>> '{}' into v_secret_key
+  from app_private_settings
+  where key = 'telegram_secret_key';
+
+  if coalesce(v_secret_key, '') = '' then
+    return;
+  end if;
+
+  return query
+  select
+    pgp_sym_decrypt(telegram_region_secrets.bot_token_ciphertext, v_secret_key) as bot_token,
+    pgp_sym_decrypt(telegram_region_secrets.chat_id_ciphertext, v_secret_key) as chat_id
+  from telegram_region_secrets
+  where telegram_region_secrets.region = btrim(coalesce(p_region, ''));
+end;
+$$ language plpgsql security definer set search_path = public, extensions;
+
+revoke all on function fn_get_telegram_region_destination(text) from public, anon, authenticated;
+grant execute on function fn_get_telegram_region_destination(text) to service_role;
 
 -- A computer's branch_id is immutable after the device row is created. An
 -- admin can revoke access to free the branch for a replacement computer, but
@@ -592,6 +788,9 @@ alter table branches enable row level security;
 alter table devices enable row level security;
 alter table admins enable row level security;
 alter table app_settings enable row level security;
+alter table app_private_settings enable row level security;
+alter table telegram_region_secrets enable row level security;
+alter table branch_utility_settings enable row level security;
 alter table power_sessions enable row level security;
 alter table fuel_refills enable row level security;
 alter table services enable row level security;
@@ -602,8 +801,7 @@ alter table notifications enable row level security;
 alter table audit_logs enable row level security;
 
 -- BRANCHES: admins can read all branch metadata. A branch computer can read
--- only its own assigned branch; the unauthenticated picker uses the safe RPC
--- above so telegram_chat_id is not exposed to every visitor.
+-- only its own assigned branch; the unauthenticated picker uses the safe RPC.
 create policy p_branches_select on branches for select
   using (
     fn_is_admin() or exists (
@@ -637,9 +835,13 @@ create policy p_admins_select on admins for select using (fn_is_admin());
 create policy p_admins_update_self on admins for update
   using (auth_user_id = auth.uid()) with check (auth_user_id = auth.uid());
 
--- APP SETTINGS are admin-only in the frontend; the Edge Function uses the
--- service role. This avoids exposing Telegram destination configuration.
-create policy p_settings_select on app_settings for select using (fn_is_admin());
+-- APP SETTINGS are admin-only in the frontend. Private reset/Telegram secrets
+-- live outside this table and are reachable only through SECURITY DEFINER RPCs.
+create policy p_settings_select on app_settings for select
+  using (
+    fn_is_admin()
+    and key not in ('system_reset_password', 'telegram_default_chat_id', 'telegram_region_config')
+  );
 create policy p_settings_service_defaults_select on app_settings for select
   using (
     key in (
@@ -647,7 +849,8 @@ create policy p_settings_service_defaults_select on app_settings for select
       'generator_service_technician_phone',
       'generator_service_company',
       'generator_service_work_done',
-      'generator_service_remarks'
+      'generator_service_remarks',
+      'dstv_package_prices'
     )
     and exists (
       select 1 from devices
@@ -656,7 +859,24 @@ create policy p_settings_service_defaults_select on app_settings for select
     )
   );
 create policy p_settings_admin_write on app_settings for all
-  using (fn_is_admin()) with check (fn_is_admin());
+  using (
+    fn_is_admin()
+    and key not in ('system_reset_password', 'telegram_default_chat_id', 'telegram_region_config')
+  )
+  with check (
+    fn_is_admin()
+    and key not in ('system_reset_password', 'telegram_default_chat_id', 'telegram_region_config')
+  );
+
+create policy p_branch_utility_select on branch_utility_settings for select
+  using (fn_is_admin() or fn_device_approved_for_branch(branch_id));
+
+create policy p_branch_utility_insert on branch_utility_settings for insert
+  with check (fn_is_admin() or fn_device_approved_for_branch(branch_id));
+
+create policy p_branch_utility_update on branch_utility_settings for update
+  using (fn_is_admin() or fn_device_approved_for_branch(branch_id))
+  with check (fn_is_admin() or fn_device_approved_for_branch(branch_id));
 
 -- Generic pattern applied to all operational tables:
 --   SELECT: admin OR approved device of that branch (branch dashboards only

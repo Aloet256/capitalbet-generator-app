@@ -109,10 +109,9 @@ Telegram live-entry messages are sent by `telegram-notify`, scheduled reminders 
 supabase functions deploy telegram-notify
 supabase functions deploy telegram-reminders
 supabase functions deploy telegram-fuel-reports
-supabase secrets set TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN TELEGRAM_DEFAULT_CHAT_ID=-1003743501704
 ```
 
-If you are using the Supabase dashboard instead of the CLI, run `supabase/setup-telegram.sql` once in the SQL editor to store the default chat ID.
+Telegram bot tokens and chat IDs are configured per region in Admin Settings. They are encrypted in Supabase and are not shown again after saving.
 
 Useful commands:
 
@@ -142,12 +141,16 @@ Do **not** rerun the complete schema over existing data. Apply these migration f
 3. `supabase/migrations/20260811_01_service_button_defaults.sql`
 4. `supabase/migrations/20260811_02_add_service_cost.sql`
 5. `supabase/migrations/20260811_03_configurable_delete_password.sql`
+6. `supabase/migrations/20260811_04_system_reset.sql`
+7. `supabase/migrations/20260811_05_region_telegram_config.sql`
+8. `supabase/migrations/20260811_06_private_telegram_secrets.sql`
+9. `supabase/migrations/20260823_01_utilities_forms_settings.sql`
 
 They are intentionally separate. PostgreSQL needs the new `yaka_reload_due` enum value committed before the next migration uses it.
 
 The second migration also removes the incorrect uniqueness constraint from `branches.code`, preserves one live device per branch, adds monthly Yaka reload dates, strengthens RLS, adds device stamping/auditing and creates the safe branch-selection RPC.
 
-The third migration adds the admin-configured generator service defaults used by the branch one-click service button. The fourth migration adds the service-detail fields below that button: items replaced, repairs done, and cost. The fifth migration makes branch-entry deletion use the password saved in Admin Settings instead of a hardcoded SQL value.
+The third migration adds the admin-configured generator service defaults used by the branch one-click service button. The fourth migration adds the service-detail fields below that button: items replaced, repairs done, and cost. The fifth migration makes branch-entry deletion use the password saved in Admin Settings instead of a hardcoded SQL value. The sixth adds the admin reset RPC. The seventh adds region-based Telegram routing. The eighth moves Telegram destinations and the reset password into private encrypted/hashed storage. The ninth adds branch utility numbers, configurable DSTV package prices, and the repairs/utilities form cleanup.
 
 ## 3. Create the first admin
 
@@ -173,15 +176,11 @@ Create a Telegram bot with BotFather, then deploy the Edge Functions:
 supabase functions deploy telegram-notify
 supabase functions deploy telegram-reminders
 supabase functions deploy telegram-fuel-reports
-supabase secrets set TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN TELEGRAM_DEFAULT_CHAT_ID=-1003743501704
 ```
 
-The Supabase runtime provides `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function. Do not put the service-role key or Telegram bot token in the frontend `.env` file.
+The Supabase runtime provides `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function. Do not put the service-role key, Telegram bot tokens, or chat IDs in the frontend `.env` file.
 
-Set either:
-
-- a branch-specific `telegram_chat_id` on `branches`, or
-- `telegram_default_chat_id` in Admin Settings as the fallback.
+In **Admin Settings -> Telegram Configuration by Region**, enter the bot token and chat ID for each branch region. Saved values are encrypted, are not returned to the browser, and can only be replaced or reset after entering the reset password.
 
 Schedule `telegram-reminders` once each day, preferably in the morning. It checks:
 
@@ -247,8 +246,8 @@ src/
 - [ ] Confirm all branch rows loaded successfully.
 - [ ] Create the first Supabase Auth admin and matching `admins` row.
 - [ ] Set production frontend environment variables.
-- [ ] Deploy the Telegram Edge Functions and set their bot-token secret.
-- [ ] Configure branch/default Telegram chat IDs if Telegram is required.
+- [ ] Deploy the Telegram Edge Functions.
+- [ ] Configure encrypted region Telegram destinations in Admin Settings if Telegram is required.
 - [ ] Schedule the reminder function daily and the fuel report function at 23:00 Africa/Kampala.
 - [ ] Run `npm run lint` and `npm run build` in an environment with npm registry access.
 - [ ] Test one branch device request → approval → outage → fuel → service → DSTV → Yaka flow.
