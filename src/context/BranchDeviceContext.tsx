@@ -9,7 +9,7 @@ interface BranchDeviceCtx {
   branch: Branch | null
   deviceStatus: DeviceStatus | null
   fingerprint: string
-  selectBranch: (branchId: string) => Promise<{ error?: string }>
+  selectBranch: (branchId: string, accessPin?: string) => Promise<{ error?: string }>
   refreshStatus: (showLoading?: boolean) => Promise<void>
 }
 
@@ -71,7 +71,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
   }, [refreshStatus])
 
   const selectBranch = useCallback(
-    async (branchId: string): Promise<{ error?: string }> => {
+    async (branchId: string, accessPin = ''): Promise<{ error?: string }> => {
       setLoading(true)
 
       const { data: existing, error: existingError } = await supabase
@@ -95,33 +95,30 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
         return {}
       }
 
-      // The server is authoritative. We persist the branch locally only after
-      // the pending request succeeds, so a race with another device does not
-      // trap this computer on a branch it never actually acquired.
+      // The server is authoritative. The RPC allows a first device to request
+      // approval normally and allows extra branch sessions only with the admin PIN.
       const deviceLabel = describeDevice()
-      const { error } = await supabase.from('devices').insert({
-        device_fingerprint: fingerprint,
-        branch_id: branchId,
-        device_label: deviceLabel,
-        status: 'pending',
+      const { data, error } = await supabase.rpc('fn_request_branch_device', {
+        p_branch_id: branchId,
+        p_device_label: deviceLabel,
+        p_access_pin: accessPin,
       })
 
       if (error) {
         if (recoverFromInvalidHeaderError(error)) return {}
         await refreshStatus(true)
-        if (error.code === '23505') {
-          return { error: 'That branch is already assigned to another computer. Choose an available branch.' }
-        }
         return { error: error.message }
       }
 
       setLockedBranchId(branchId)
+      const requestedStatus = Array.isArray(data) ? data[0]?.device_status : null
       void notifyTelegramEntry({
-        type: 'device_request',
+        type: requestedStatus === 'approved' ? 'device_approved' : 'device_request',
         branchId,
         details: {
           device_label: deviceLabel,
           requested_at: new Date().toLocaleString(),
+          access_type: requestedStatus === 'approved' ? 'PIN extra session' : 'Admin approval',
         },
       })
       await refreshStatus(true)

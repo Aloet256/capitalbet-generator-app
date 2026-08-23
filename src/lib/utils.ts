@@ -14,7 +14,7 @@ export function formatMinutes(mins: number | null | undefined): string {
 
 export function formatUGX(amount: number | null | undefined): string {
   if (amount === null || amount === undefined) return '—'
-  return new Intl.NumberFormat('en-UG', { style: 'currency', currency: 'UGX', maximumFractionDigits: 0 }).format(amount)
+  return `UGX ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(amount)}`
 }
 
 export function formatCurrencyInput(value: string | number | null | undefined): string {

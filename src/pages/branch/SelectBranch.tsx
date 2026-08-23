@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Building2, Clock, ShieldCheck, Ban, Search, LockKeyhole, RefreshCw } from 'lucide-react'
+import { Building2, Clock, ShieldCheck, Ban, Search, RefreshCw, KeyRound } from 'lucide-react'
 import { useBranches } from '../../hooks/useBranches'
 import { useBranchDevice } from '../../context/BranchDeviceContext'
 import { Spinner } from '../../components/ui/Spinner'
 import { ThemeToggle } from '../../components/ui/ThemeToggle'
 import { BrandLogo } from '../../components/BrandLogo'
+import { Modal } from '../../components/ui/Modal'
+import { Input } from '../../components/ui/Input'
+import { Button } from '../../components/ui/Button'
 
 export default function SelectBranch() {
   const { grouped, loading: branchesLoading, error: branchesError } = useBranches()
@@ -13,6 +16,8 @@ export default function SelectBranch() {
   const [query, setQuery] = useState('')
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
+  const [pinBranch, setPinBranch] = useState<{ id: string; name: string } | null>(null)
+  const [accessPin, setAccessPin] = useState('')
 
   const filteredGroups = useMemo(() => {
     if (!query.trim()) return grouped
@@ -99,11 +104,15 @@ export default function SelectBranch() {
     )
   }
 
-  const handleSelect = async (id: string) => {
+  const handleSelect = async (id: string, pin = '') => {
     setSubmitting(id)
     setSelectionError(null)
-    const res = await selectBranch(id)
+    const res = await selectBranch(id, pin)
     if (res.error) setSelectionError(res.error)
+    else {
+      setPinBranch(null)
+      setAccessPin('')
+    }
     setSubmitting(null)
   }
 
@@ -124,7 +133,7 @@ export default function SelectBranch() {
           <ShieldCheck className="text-brand-600 dark:text-brand-400 shrink-0 mt-0.5" size={20} />
           <p className="text-sm text-brand-800 dark:text-brand-300">
             A computer can be assigned to only one branch. Once selected, it cannot switch to another branch. Branches
-            already assigned to a pending or approved computer are locked from selection.
+            already assigned to another computer require the branch access PIN from an admin.
           </p>
         </div>
 
@@ -157,18 +166,26 @@ export default function SelectBranch() {
                   {list.map((b) => (
                     <button
                       key={b.id}
-                      onClick={() => void handleSelect(b.id)}
-                      disabled={submitting !== null || b.device_locked}
+                      onClick={() => {
+                        if (b.device_locked) {
+                          setSelectionError(null)
+                          setPinBranch({ id: b.id, name: b.name })
+                          setAccessPin('')
+                        } else {
+                          void handleSelect(b.id)
+                        }
+                      }}
+                      disabled={submitting !== null}
                       className="card text-left hover:border-brand-400 dark:hover:border-brand-600 hover:shadow-md transition-all flex items-center justify-between disabled:opacity-55 disabled:cursor-not-allowed"
                     >
                       <div>
                         <span className="font-medium text-slate-800 dark:text-slate-100">{b.name}</span>
-                        {b.device_locked && <p className="text-xs text-slate-400 mt-1">Assigned to another computer</p>}
+                        {b.device_locked && <p className="text-xs text-slate-400 mt-1">PIN required for extra session</p>}
                       </div>
                       {submitting === b.id ? (
                         <Spinner size={16} />
                       ) : b.device_locked ? (
-                        <LockKeyhole size={16} className="text-amber-500" />
+                        <KeyRound size={16} className="text-amber-500" />
                       ) : (
                         <Building2 size={16} className="text-slate-300" />
                       )}
@@ -183,6 +200,40 @@ export default function SelectBranch() {
           </div>
         )}
       </div>
+      <Modal
+        open={Boolean(pinBranch)}
+        onClose={() => {
+          if (!submitting) {
+            setPinBranch(null)
+            setAccessPin('')
+          }
+        }}
+        title="Branch access PIN"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {pinBranch?.name} already has an active computer. Enter the PIN from an admin to open this branch on this computer.
+          </p>
+          <Input
+            label="Access PIN"
+            type="password"
+            autoFocus
+            value={accessPin}
+            onChange={(e) => setAccessPin(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && pinBranch && accessPin && submitting === null) void handleSelect(pinBranch.id, accessPin)
+            }}
+          />
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setPinBranch(null)} disabled={submitting !== null}>
+              Cancel
+            </Button>
+            <Button onClick={() => pinBranch && void handleSelect(pinBranch.id, accessPin)} disabled={!accessPin || submitting !== null}>
+              {submitting === pinBranch?.id ? 'Checking...' : 'Open Branch'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

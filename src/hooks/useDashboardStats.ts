@@ -186,5 +186,5 @@ export function useDashboardStats(branchId: string | null) {
     return months
   }, [refills, nowTick])
 
-  return { stats, weeklyChart, dailyBreakdown, monthlyFuelChart, loading, ongoing }
+  return { stats, sessions, refills, weeklyChart, dailyBreakdown, monthlyFuelChart, loading, ongoing }
 }

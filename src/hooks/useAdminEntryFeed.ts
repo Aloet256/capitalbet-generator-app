@@ -80,7 +80,7 @@ function branchTabSeenKey(branchId: string, tab: 'power' | 'fuel' | 'servicing' 
 function money(value: unknown) {
   const amount = Number(value)
   return Number.isFinite(amount)
-    ? new Intl.NumberFormat('en-UG', { style: 'currency', currency: 'UGX', maximumFractionDigits: 0 }).format(amount)
+    ? `UGX ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(amount)}`
     : null
 }
 
