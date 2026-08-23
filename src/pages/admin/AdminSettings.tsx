@@ -56,6 +56,7 @@ export default function AdminSettings() {
   const [openUtilityBranches, setOpenUtilityBranches] = useState<Set<string>>(() => new Set())
   const [branchUtilityError, setBranchUtilityError] = useState<string | null>(null)
   const [telegramStatuses, setTelegramStatuses] = useState<TelegramRegionSecretStatus[]>([])
+  const [telegramConfigSectionOpen, setTelegramConfigSectionOpen] = useState(false)
   const [telegramStatusLoading, setTelegramStatusLoading] = useState(false)
   const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null)
   const [telegramModal, setTelegramModal] = useState<{ mode: TelegramModalMode; region: string } | null>(null)
@@ -499,71 +500,90 @@ export default function AdminSettings() {
           )}
 
           <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
-            <div className="flex items-center gap-2">
-              <Send size={16} className="text-brand-600" />
-              <h4 className="font-semibold text-slate-800 dark:text-slate-100">Telegram Configuration by Region</h4>
-            </div>
-            <p className="text-xs text-slate-400 mt-1">Branch alerts are sent only to the encrypted Telegram destination configured for that branch region.</p>
+            <button
+              type="button"
+              className="flex w-full items-start justify-between gap-3 text-left"
+              onClick={() => setTelegramConfigSectionOpen((open) => !open)}
+              aria-expanded={telegramConfigSectionOpen}
+            >
+              <span>
+                <span className="flex items-center gap-2">
+                  <Send size={16} className="text-brand-600" />
+                  <span className="font-semibold text-slate-800 dark:text-slate-100">Telegram Configuration by Region</span>
+                </span>
+                <span className="mt-1 block text-xs text-slate-400">
+                  Branch alerts are sent only to the encrypted Telegram destination configured for that branch region.
+                </span>
+              </span>
+              <ChevronDown
+                size={18}
+                className={`mt-0.5 shrink-0 text-slate-400 transition-transform ${telegramConfigSectionOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
           </div>
 
-          {(regionLoadError || telegramStatusError || branchesMissingRegion > 0 || missingTelegramRegions.length > 0) && (
-            <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/10 dark:text-amber-300">
-              {regionLoadError && <p>{regionLoadError}</p>}
-              {telegramStatusError && <p>{telegramStatusError}</p>}
-              {branchesMissingRegion > 0 && <p>{branchesMissingRegion} branch(es) do not have a region assigned.</p>}
-              {missingTelegramRegions.length > 0 && <p>Missing Telegram configuration for: {missingTelegramRegions.join(', ')}.</p>}
-            </div>
+          {telegramConfigSectionOpen && (
+            <>
+              {(regionLoadError || telegramStatusError || branchesMissingRegion > 0 || missingTelegramRegions.length > 0) && (
+                <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/10 dark:text-amber-300">
+                  {regionLoadError && <p>{regionLoadError}</p>}
+                  {telegramStatusError && <p>{telegramStatusError}</p>}
+                  {branchesMissingRegion > 0 && <p>{branchesMissingRegion} branch(es) do not have a region assigned.</p>}
+                  {missingTelegramRegions.length > 0 && <p>Missing Telegram configuration for: {missingTelegramRegions.join(', ')}.</p>}
+                </div>
+              )}
+
+              <div className="sm:col-span-2 space-y-3">
+                {telegramActionMessage && <p className="text-sm text-emerald-600">{telegramActionMessage}</p>}
+                {telegramStatusLoading ? (
+                  <p className="text-sm text-slate-400">Checking encrypted Telegram configuration...</p>
+                ) : regions.length === 0 && !regionLoadError ? (
+                  <p className="text-sm text-slate-400">No active branch regions found.</p>
+                ) : (
+                  regions.map((region) => {
+                    const status = telegramStatusByRegion.get(region)
+                    const configured = Boolean(status?.bot_token_configured && status?.chat_id_configured)
+                    return (
+                      <div key={region} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h5 className="font-semibold text-slate-800 dark:text-slate-100">{region}</h5>
+                              <Badge tone={configured ? 'green' : 'amber'}>{configured ? 'Configured' : 'Missing setup'}</Badge>
+                            </div>
+                            <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+                              <div className="flex items-center gap-2">
+                                <EyeOff size={15} className="text-slate-400" />
+                                <span>Bot token</span>
+                                <Badge tone={status?.bot_token_configured ? 'green' : 'red'}>
+                                  {status?.bot_token_configured ? 'Hidden' : 'Missing'}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <EyeOff size={15} className="text-slate-400" />
+                                <span>Chat ID</span>
+                                <Badge tone={status?.chat_id_configured ? 'green' : 'red'}>
+                                  {status?.chat_id_configured ? 'Hidden' : 'Missing'}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 sm:justify-end">
+                            <Button variant="secondary" type="button" onClick={() => openTelegramModal('edit', region)}>
+                              <Pencil size={15} /> {configured ? 'Edit' : 'Configure'}
+                            </Button>
+                            <Button variant="danger" type="button" onClick={() => openTelegramModal('reset', region)} disabled={!configured}>
+                              <Trash2 size={15} /> Reset
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </>
           )}
-
-          <div className="sm:col-span-2 space-y-3">
-            {telegramActionMessage && <p className="text-sm text-emerald-600">{telegramActionMessage}</p>}
-            {telegramStatusLoading ? (
-              <p className="text-sm text-slate-400">Checking encrypted Telegram configuration...</p>
-            ) : regions.length === 0 && !regionLoadError ? (
-              <p className="text-sm text-slate-400">No active branch regions found.</p>
-            ) : (
-              regions.map((region) => {
-                const status = telegramStatusByRegion.get(region)
-                const configured = Boolean(status?.bot_token_configured && status?.chat_id_configured)
-                return (
-                  <div key={region} className="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h5 className="font-semibold text-slate-800 dark:text-slate-100">{region}</h5>
-                          <Badge tone={configured ? 'green' : 'amber'}>{configured ? 'Configured' : 'Missing setup'}</Badge>
-                        </div>
-                        <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
-                          <div className="flex items-center gap-2">
-                            <EyeOff size={15} className="text-slate-400" />
-                            <span>Bot token</span>
-                            <Badge tone={status?.bot_token_configured ? 'green' : 'red'}>
-                              {status?.bot_token_configured ? 'Hidden' : 'Missing'}
-                            </Badge>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <EyeOff size={15} className="text-slate-400" />
-                            <span>Chat ID</span>
-                            <Badge tone={status?.chat_id_configured ? 'green' : 'red'}>
-                              {status?.chat_id_configured ? 'Hidden' : 'Missing'}
-                            </Badge>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 sm:justify-end">
-                        <Button variant="secondary" type="button" onClick={() => openTelegramModal('edit', region)}>
-                          <Pencil size={15} /> {configured ? 'Edit' : 'Configure'}
-                        </Button>
-                        <Button variant="danger" type="button" onClick={() => openTelegramModal('reset', region)} disabled={!configured}>
-                          <Trash2 size={15} /> Reset
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
 
           <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
             <div className="flex items-center gap-2">
