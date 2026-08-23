@@ -13,7 +13,7 @@ import { getTelegramRegionStatuses, resetTelegramRegionConfig, saveTelegramRegio
 import { resetSystemData } from '../../lib/systemReset'
 import { supabase } from '../../lib/supabase'
 import { DSTV_PACKAGES } from '../../lib/dstv'
-import { parseCurrencyInput } from '../../lib/utils'
+import { parseCurrencyInput, toLocalDateInput } from '../../lib/utils'
 import type { AppSettings, TelegramRegionSecretStatus } from '../../types/database'
 
 type TelegramModalMode = 'edit' | 'reset'
@@ -41,6 +41,8 @@ export default function AdminSettings() {
   const [settingsSaveError, setSettingsSaveError] = useState<string | null>(null)
   const [sweepMessage, setSweepMessage] = useState<string | null>(null)
   const [sweeping, setSweeping] = useState(false)
+  const [testingReminders, setTestingReminders] = useState(false)
+  const [reminderTestDate, setReminderTestDate] = useState(toLocalDateInput())
   const [resetModalOpen, setResetModalOpen] = useState(false)
   const [resetPassword, setResetPassword] = useState('')
   const [resetting, setResetting] = useState(false)
@@ -218,6 +220,19 @@ export default function AdminSettings() {
     const res = await runReminderSweepNow()
     setSweepMessage(res.message)
     setSweeping(false)
+  }
+
+  const testReminderDate = async () => {
+    if (!reminderTestDate) {
+      setSweepMessage('Choose a test date first.')
+      return
+    }
+
+    setTestingReminders(true)
+    setSweepMessage(null)
+    const res = await runReminderSweepNow({ dryRun: true, today: reminderTestDate })
+    setSweepMessage(res.message)
+    setTestingReminders(false)
   }
 
   const submitSystemReset = async () => {
@@ -545,11 +560,22 @@ export default function AdminSettings() {
           <h3 className="font-semibold text-slate-800 dark:text-slate-100">Telegram Reminder Sweep</h3>
         </div>
         <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-          Manually run the service, DSTV, and monthly Yaka reminder checks. The deployed function should also be scheduled daily.
+          Test any date without sending Telegram messages, or run the live reminder checks for today.
         </p>
-        <Button variant="secondary" onClick={testSweep} disabled={sweeping}>
-          {sweeping ? 'Running...' : 'Run Now'}
-        </Button>
+        <div className="grid gap-3 md:grid-cols-[minmax(180px,240px)_auto_auto] md:items-end">
+          <Input
+            label="Reminder Test Date"
+            type="date"
+            value={reminderTestDate}
+            onChange={(e) => setReminderTestDate(e.target.value)}
+          />
+          <Button variant="secondary" onClick={testReminderDate} disabled={testingReminders || sweeping}>
+            {testingReminders ? 'Testing...' : 'Test Date Only'}
+          </Button>
+          <Button variant="primary" onClick={testSweep} disabled={sweeping || testingReminders}>
+            {sweeping ? 'Running...' : 'Run Live Sweep'}
+          </Button>
+        </div>
         {sweepMessage && <p className="text-xs text-slate-500 mt-2 break-words">{sweepMessage}</p>}
       </div>
 

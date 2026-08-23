@@ -20,6 +20,12 @@ interface TelegramDestination {
   chat_id?: string
 }
 
+interface ReminderRunOptions {
+  dryRun: boolean
+  baseDate: Date
+  checkedDate: string
+}
+
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -57,8 +63,31 @@ function dateOnlyKampala(date: Date): string {
   return `${part('year')}-${part('month')}-${part('day')}`
 }
 
-function addDays(days: number): string {
-  return dateOnlyKampala(new Date(Date.now() + days * 86400000))
+function addDays(days: number, baseDate = new Date()): string {
+  return dateOnlyKampala(new Date(baseDate.getTime() + days * 86400000))
+}
+
+function parseKampalaDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const date = new Date(`${value}T12:00:00+03:00`)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+async function getRunOptions(req: Request): Promise<ReminderRunOptions> {
+  let body: Record<string, unknown> = {}
+  try {
+    const raw = await req.text()
+    body = raw ? JSON.parse(raw) : {}
+  } catch {
+    body = {}
+  }
+
+  const baseDate = parseKampalaDate(body.today) ?? new Date()
+  return {
+    dryRun: body.dry_run === true || body.dryRun === true,
+    baseDate,
+    checkedDate: dateOnlyKampala(baseDate),
+  }
 }
 
 async function getSetting<T>(key: string, fallback: T): Promise<T> {
@@ -181,19 +210,27 @@ Deno.serve(async (req) => {
   }
 
   const results = { services: 0, dstv: 0, yaka: 0, telegramFailures: 0 }
+  const options = await getRunOptions(req)
   const serviceDays = Number(await getSetting('service_reminder_days', 5))
   const dstvDays = Number(await getSetting('dstv_reminder_days', 5))
   const yakaDays = Number(await getSetting('yaka_reminder_days', 3))
+  const serviceCutoff = addDays(serviceDays, options.baseDate)
+  const dstvCutoff = addDays(dstvDays, options.baseDate)
+  const yakaCutoff = addDays(yakaDays, options.baseDate)
 
   const { data: dueServices, error: serviceError } = await supabase
     .from('services')
     .select('id, branch_id, next_service_date, reminder_sent, branches(name, region, active)')
     .eq('reminder_sent', false)
-    .lte('next_service_date', addDays(serviceDays))
+    .lte('next_service_date', serviceCutoff)
 
   if (serviceError) throw serviceError
   for (const s of dueServices ?? []) {
     if ((s as any).branches?.active === false) continue
+    if (options.dryRun) {
+      results.services++
+      continue
+    }
     const branchName = (s as any).branches?.name ?? 'Branch'
     const destination = await getRegionDestination((s as any).branches ?? null, 'generator service reminder')
     let telegramSent = false
@@ -227,11 +264,15 @@ Deno.serve(async (req) => {
     .from('dstv_subscriptions')
     .select('id, branch_id, renewal_date, package, reminder_sent, branches(name, region, active)')
     .eq('reminder_sent', false)
-    .lte('renewal_date', addDays(dstvDays))
+    .lte('renewal_date', dstvCutoff)
 
   if (dstvError) throw dstvError
   for (const d of dueDstv ?? []) {
     if ((d as any).branches?.active === false) continue
+    if (options.dryRun) {
+      results.dstv++
+      continue
+    }
     const branchName = (d as any).branches?.name ?? 'Branch'
     const destination = await getRegionDestination((d as any).branches ?? null, 'DSTV renewal reminder')
     let telegramSent = false
@@ -278,7 +319,12 @@ Deno.serve(async (req) => {
       .maybeSingle()
 
     if (yakaError) throw yakaError
-    if (!latest || latest.reminder_sent || latest.expected_reload_date > addDays(yakaDays)) continue
+    if (!latest || latest.reminder_sent || latest.expected_reload_date > yakaCutoff) continue
+
+    if (options.dryRun) {
+      results.yaka++
+      continue
+    }
 
     const destination = await getRegionDestination(branch, 'Yaka reload reminder')
     let telegramSent = false
@@ -308,7 +354,21 @@ Deno.serve(async (req) => {
     results.yaka++
   }
 
-  return new Response(JSON.stringify({ ok: true, results, checked_at: new Date().toISOString() }), {
+  return new Response(JSON.stringify({
+    ok: true,
+    dry_run: options.dryRun,
+    checked_date: options.checkedDate,
+    reminder_windows: {
+      service_days: serviceDays,
+      service_cutoff: serviceCutoff,
+      dstv_days: dstvDays,
+      dstv_cutoff: dstvCutoff,
+      yaka_days: yakaDays,
+      yaka_cutoff: yakaCutoff,
+    },
+    results,
+    checked_at: new Date().toISOString(),
+  }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 })
