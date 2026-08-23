@@ -1,7 +1,7 @@
 ﻿// Supabase Edge Function: telegram-fuel-reports
 // Schedule once per day at 20:00 UTC, which is 23:00 Africa/Kampala.
-// It sends the daily fuel-cost report every run, plus weekly on Sunday and
-// monthly on the last day of the month.
+// It sends the daily regional generator/fuel report every run, plus weekly
+// on Sunday and monthly on the last day of the month.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4'
 
@@ -28,6 +28,12 @@ interface FuelRow {
   branch_id: string
   litres: number | string
   cost: number | string
+}
+
+interface PowerRow {
+  branch_id: string
+  started_at: string
+  ended_at: string | null
 }
 
 interface TelegramDestination {
@@ -57,6 +63,16 @@ function litres(value: number): string {
   return `${Number(value.toFixed(2)).toLocaleString('en-US')} L`
 }
 
+function generatorTime(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes))
+  const hours = Math.floor(total / 60)
+  const mins = total % 60
+  const parts: string[] = []
+  if (hours) parts.push(`${hours} ${hours === 1 ? 'HR' : 'HRS'}`)
+  if (mins || parts.length === 0) parts.push(`${mins} ${mins === 1 ? 'MINUTE' : 'MINUTES'}`)
+  return parts.join(' ')
+}
+
 function dateOnlyKampala(date: Date): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Kampala',
@@ -80,6 +96,15 @@ function formatDateKey(dateKey: string): string {
     year: 'numeric',
     timeZone: 'UTC',
   })
+}
+
+function formatDateSlash(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-')
+  return `${day}/${month}/${year}`
+}
+
+function kampalaDateKeyToUtc(dateKey: string): Date {
+  return new Date(`${dateKey}T00:00:00+03:00`)
 }
 
 function shiftDateKey(dateKey: string, days: number): string {
@@ -117,7 +142,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
   if (mode === 'daily' || mode === 'auto') {
     ranges.push({
       key: 'daily',
-      title: 'Daily Fuel Cost Report',
+      title: 'Daily Generator & Fuel Report',
       start: todayKey,
       end: shiftDateKey(todayKey, 1),
       label: formatDateKey(todayKey),
@@ -128,7 +153,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
     const start = startOfWeekKey(todayKey)
     ranges.push({
       key: 'weekly',
-      title: 'Weekly Fuel Cost Report',
+      title: 'Weekly Generator & Fuel Report',
       start,
       end: shiftDateKey(todayKey, 1),
       label: `${formatDateKey(start)} - ${formatDateKey(todayKey)}`,
@@ -139,7 +164,7 @@ function reportRanges(mode: ReportMode, todayKey: string) {
     const start = startOfMonthKey(todayKey)
     ranges.push({
       key: 'monthly',
-      title: 'Monthly Fuel Cost Report',
+      title: 'Monthly Generator & Fuel Report',
       start,
       end: nextMonthStartKey(todayKey),
       label: parseDateKey(todayKey).toLocaleDateString('en-GB', {
@@ -249,10 +274,18 @@ function chunkReport(header: string, lines: string[]): string[] {
 
 function reportTone(title: string): string {
   const normalized = title.toLowerCase()
-  if (normalized.includes('daily')) return 'End-of-day fuel usage summary for generator operations.'
-  if (normalized.includes('weekly')) return 'Weekly fuel performance summary by branch.'
-  if (normalized.includes('monthly')) return 'Monthly fuel cost and volume summary by branch.'
-  return 'Fuel cost and volume summary by branch.'
+  if (normalized.includes('daily')) return 'End-of-day generator runtime and fuel usage by branch.'
+  if (normalized.includes('weekly')) return 'Weekly generator runtime and fuel usage by branch.'
+  if (normalized.includes('monthly')) return 'Monthly generator runtime and fuel usage by branch.'
+  return 'Generator runtime and fuel usage by branch.'
+}
+
+function reportPeriodWord(title: string): string {
+  const normalized = title.toLowerCase()
+  if (normalized.includes('daily')) return 'TODAY'
+  if (normalized.includes('weekly')) return 'THIS WEEK'
+  if (normalized.includes('monthly')) return 'THIS MONTH'
+  return 'THIS PERIOD'
 }
 
 async function buildAndSendReport(args: {
@@ -265,26 +298,56 @@ async function buildAndSendReport(args: {
   start: string
   end: string
 }) {
-  const { data, error } = await supabase
+  const reportStart = kampalaDateKeyToUtc(args.start)
+  const reportEnd = kampalaDateKeyToUtc(args.end)
+  const effectiveReportEnd = new Date(Math.min(reportEnd.getTime(), Date.now()))
+  const branchIds = new Set(args.branches.map((branch) => branch.id))
+
+  const { data: fuelRows, error: fuelError } = await supabase
     .from('fuel_refills')
     .select('branch_id, litres, cost')
     .gte('refill_date', args.start)
     .lt('refill_date', args.end)
 
-  if (error) throw error
+  if (fuelError) throw fuelError
 
-  const branchIds = new Set(args.branches.map((branch) => branch.id))
-  const totals = new Map<string, { litres: number; cost: number; records: number }>()
-  for (const row of ((data as FuelRow[] | null) ?? [])) {
+  const { data: powerRows, error: powerError } = await supabase
+    .from('power_sessions')
+    .select('branch_id, started_at, ended_at')
+    .lt('started_at', reportEnd.toISOString())
+    .or(`ended_at.is.null,ended_at.gte.${reportStart.toISOString()}`)
+
+  if (powerError) throw powerError
+
+  const fuelTotals = new Map<string, { litres: number; cost: number; records: number }>()
+  for (const row of ((fuelRows as FuelRow[] | null) ?? [])) {
     if (!branchIds.has(row.branch_id)) continue
-    const current = totals.get(row.branch_id) ?? { litres: 0, cost: 0, records: 0 }
+    const current = fuelTotals.get(row.branch_id) ?? { litres: 0, cost: 0, records: 0 }
     current.litres += numberValue(row.litres)
     current.cost += numberValue(row.cost)
     current.records += 1
-    totals.set(row.branch_id, current)
+    fuelTotals.set(row.branch_id, current)
   }
 
-  const overall = Array.from(totals.values()).reduce(
+  const generatorTotals = new Map<string, { minutes: number; records: number }>()
+  for (const row of ((powerRows as PowerRow[] | null) ?? [])) {
+    if (!branchIds.has(row.branch_id)) continue
+    const startedAt = new Date(row.started_at)
+    const endedAt = row.ended_at ? new Date(row.ended_at) : effectiveReportEnd
+    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) continue
+
+    const overlapStart = new Date(Math.max(startedAt.getTime(), reportStart.getTime()))
+    const overlapEnd = new Date(Math.min(endedAt.getTime(), effectiveReportEnd.getTime()))
+    const minutes = Math.max(0, Math.round((overlapEnd.getTime() - overlapStart.getTime()) / 60000))
+    if (minutes <= 0) continue
+
+    const current = generatorTotals.get(row.branch_id) ?? { minutes: 0, records: 0 }
+    current.minutes += minutes
+    current.records += 1
+    generatorTotals.set(row.branch_id, current)
+  }
+
+  const fuelOverall = Array.from(fuelTotals.values()).reduce(
     (sum, item) => ({
       litres: sum.litres + item.litres,
       cost: sum.cost + item.cost,
@@ -292,39 +355,48 @@ async function buildAndSendReport(args: {
     }),
     { litres: 0, cost: 0, records: 0 },
   )
+  const generatorOverall = Array.from(generatorTotals.values()).reduce(
+    (sum, item) => ({
+      minutes: sum.minutes + item.minutes,
+      records: sum.records + item.records,
+    }),
+    { minutes: 0, records: 0 },
+  )
+  const periodWord = reportPeriodWord(args.title)
 
   const header = [
-    `⛽ <b>${escapeHtml(args.title)}</b>`,
+    `📊 <b>${escapeHtml(args.title.toUpperCase())}</b>`,
     `<i>${escapeHtml(reportTone(args.title))}</i>`,
     '',
-    '<b>Report Context</b>',
-    `• <b>Region:</b> ${escapeHtml(args.region || 'Unassigned Region')}`,
-    `• <b>Period:</b> ${escapeHtml(args.label)}`,
+    `<b>REGION:</b> ${escapeHtml(args.region || 'Unassigned Region')}`,
+    `<b>DATE:</b> ${formatDateSlash(args.start)}`,
+    args.start !== shiftDateKey(args.end, -1) ? `<b>PERIOD:</b> ${escapeHtml(args.label)}` : null,
     '',
-    '<b>Summary</b>',
-    `• <b>Total cost:</b> ${money(overall.cost)}`,
-    `• <b>Total litres:</b> ${litres(overall.litres)}`,
-    `• <b>Refill records:</b> ${overall.records}`,
+    '<b>REGION TOTAL</b>',
+    `• <b>Generator time:</b> ${generatorTime(generatorOverall.minutes)}`,
+    `• <b>Fuel used:</b> ${money(fuelOverall.cost)}`,
+    `• <b>Fuel litres:</b> ${litres(fuelOverall.litres)}`,
     '',
-    '<b>Branch Breakdown</b>',
-  ].join('\n')
+    '<b>BRANCH REPORT</b>',
+  ].filter(Boolean).join('\n')
 
   const lines = args.branches.map((branch) => {
-    const total = totals.get(branch.id) ?? { litres: 0, cost: 0, records: 0 }
-    return [
-      '',
-      `• <b>${escapeHtml(branch.name)}</b>`,
-      `  Cost: ${money(total.cost)}`,
-      `  Litres: ${litres(total.litres)}`,
-      `  Refills: ${total.records}`,
-    ].join('\n')
+    const fuel = fuelTotals.get(branch.id) ?? { litres: 0, cost: 0, records: 0 }
+    const generator = generatorTotals.get(branch.id) ?? { minutes: 0, records: 0 }
+    return `• <b>${escapeHtml(branch.name.toUpperCase())}</b> - ${generatorTime(generator.minutes)} ON GEN ${periodWord}, FUEL USED ${periodWord} ${money(fuel.cost)}`
   })
 
   for (const message of chunkReport(header, lines)) {
     await sendTelegram(args.botToken, args.chatId, message)
   }
 
-  return { cost: overall.cost, litres: overall.litres, records: overall.records }
+  return {
+    generator_minutes: generatorOverall.minutes,
+    generator_sessions: generatorOverall.records,
+    cost: fuelOverall.cost,
+    litres: fuelOverall.litres,
+    fuel_records: fuelOverall.records,
+  }
 }
 
 Deno.serve(async (req) => {

@@ -190,7 +190,18 @@ Schedule `telegram-reminders` once each day, preferably in the morning. It check
 
 An authenticated admin can also run the same check from **Admin Settings → Run Now**.
 
-Schedule `telegram-fuel-reports` once each day at **20:00 UTC**, which is **23:00 Africa/Kampala**. It sends daily branch fuel cost totals every day, weekly totals on Sunday night, and monthly totals on the last day of the month.
+The repository also includes `.github/workflows/nightly-telegram-reports.yml`, scheduled at **20:00 UTC**, which is **23:00 Africa/Kampala**. It calls `telegram-fuel-reports` every night and sends each region a full branch report showing generator runtime and fuel used in UGX for the day. On Sunday and month-end, the function can also include weekly/monthly rollups when run in `auto` mode.
+
+The workflow needs these GitHub secrets:
+
+- `VITE_SUPABASE_URL`
+- `FUEL_REPORT_CRON_SECRET`
+
+Deploy `telegram-fuel-reports` with `--no-verify-jwt` when using the workflow because the function authorizes scheduled calls with `x-cron-secret`:
+
+```bash
+supabase functions deploy telegram-fuel-reports --no-verify-jwt
+```
 
 ## 5. Device-lock behavior
 

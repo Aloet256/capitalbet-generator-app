@@ -1,0 +1,48 @@
+name: Nightly Telegram Reports
+
+on:
+  schedule:
+    # 20:00 UTC is 23:00 Africa/Kampala.
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Report mode
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - daily
+          - weekly
+          - monthly
+      date:
+        description: Optional report date in YYYY-MM-DD
+        required: false
+        type: string
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send regional generator and fuel reports
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          FUEL_REPORT_CRON_SECRET: ${{ secrets.FUEL_REPORT_CRON_SECRET }}
+          REPORT_MODE: ${{ github.event.inputs.mode || 'auto' }}
+          REPORT_DATE: ${{ github.event.inputs.date }}
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$FUEL_REPORT_CRON_SECRET"
+
+          body="{\"mode\":\"${REPORT_MODE:-auto}\""
+          if [ -n "$REPORT_DATE" ]; then
+            body="$body,\"date\":\"$REPORT_DATE\""
+          fi
+          body="$body}"
+
+          curl --fail-with-body --retry 3 --retry-delay 10 \
+            --request POST "$SUPABASE_URL/functions/v1/telegram-fuel-reports" \
+            --header "Content-Type: application/json" \
+            --header "x-cron-secret: $FUEL_REPORT_CRON_SECRET" \
+            --data "$body"
