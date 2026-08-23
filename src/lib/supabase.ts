@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 import { getDeviceFingerprint } from './device'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const url = asciiHeaderValue(import.meta.env.VITE_SUPABASE_URL)
+const anonKey = asciiHeaderValue(import.meta.env.VITE_SUPABASE_ANON_KEY)
 const AUTH_STORAGE_KEY = 'cb_supabase_auth'
 const INVALID_HEADER_RECOVERY_KEY = 'cb_invalid_header_recovery_attempted'
 
@@ -17,6 +17,16 @@ function isAsciiHeaderValue(value: string) {
 
 function asciiHeaderValue(value: unknown) {
   return String(value ?? '').replace(/[^\x20-\x7E]/g, '')
+}
+
+function isInvalidHeaderValueError(error: unknown) {
+  const message = errorMessage(error)
+  return (
+    message.includes('non ISO-8859-1') ||
+    message.includes('ByteString') ||
+    message.includes('greater than 255') ||
+    (message.includes("Failed to execute 'set' on 'Headers'") && message.includes('Headers'))
+  )
 }
 
 function sanitizeHeadersInit(headers: HeadersInit): HeadersInit {
@@ -48,7 +58,7 @@ function installHeaderValueGuard() {
       try {
         return originalSet.call(this, name, value)
       } catch (error) {
-        if (errorMessage(error).includes('non ISO-8859-1')) {
+        if (isInvalidHeaderValueError(error)) {
           return originalSet.call(this, name, asciiHeaderValue(value))
         }
         throw error
@@ -59,7 +69,7 @@ function installHeaderValueGuard() {
       try {
         return originalAppend.call(this, name, value)
       } catch (error) {
-        if (errorMessage(error).includes('non ISO-8859-1')) {
+        if (isInvalidHeaderValueError(error)) {
           return originalAppend.call(this, name, asciiHeaderValue(value))
         }
         throw error
@@ -125,11 +135,7 @@ function clearAppBrowserStorage() {
 }
 
 export function recoverFromInvalidHeaderError(error: unknown) {
-  const message = errorMessage(error)
-  const isInvalidHeader =
-    message.includes('non ISO-8859-1') || (message.includes("Failed to execute 'set' on 'Headers'") && message.includes('Headers'))
-
-  if (!isInvalidHeader || typeof sessionStorage === 'undefined' || typeof window === 'undefined') return false
+  if (!isInvalidHeaderValueError(error) || typeof sessionStorage === 'undefined' || typeof window === 'undefined') return false
   if (sessionStorage.getItem(INVALID_HEADER_RECOVERY_KEY) === '1') return false
 
   sessionStorage.setItem(INVALID_HEADER_RECOVERY_KEY, '1')
