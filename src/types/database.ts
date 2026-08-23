@@ -27,6 +27,8 @@ export interface Device {
   device_fingerprint: string
   branch_id: string
   status: DeviceStatus
+  access_kind: 'primary' | 'extra_session'
+  access_pin?: string | null
   device_label: string | null
   requested_at: string
   decided_at: string | null

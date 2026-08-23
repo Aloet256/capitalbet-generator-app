@@ -8,8 +8,10 @@ interface BranchDeviceCtx {
   loading: boolean
   branch: Branch | null
   deviceStatus: DeviceStatus | null
+  deviceAccessKind: 'primary' | 'extra_session' | null
   fingerprint: string
-  selectBranch: (branchId: string, accessPin?: string) => Promise<{ error?: string }>
+  selectBranch: (branchId: string) => Promise<{ error?: string }>
+  submitAccessPin: (pin: string) => Promise<{ error?: string }>
   refreshStatus: (showLoading?: boolean) => Promise<void>
 }
 
@@ -20,6 +22,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [branch, setBranch] = useState<Branch | null>(null)
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null)
+  const [deviceAccessKind, setDeviceAccessKind] = useState<'primary' | 'extra_session' | null>(null)
 
   const refreshStatus = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
@@ -28,7 +31,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
     // its branch key was removed, restore the original assignment from Supabase.
     const { data: device, error: deviceError } = await supabase
       .from('devices')
-      .select('id, branch_id, status, last_seen_at, branches(*)')
+      .select('id, branch_id, status, access_kind, last_seen_at, branches(*)')
       .eq('device_fingerprint', fingerprint)
       .maybeSingle()
 
@@ -44,6 +47,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       setLockedBranchId(device.branch_id)
       setBranch(assignedBranch ?? null)
       setDeviceStatus(device.status as DeviceStatus)
+      setDeviceAccessKind((device.access_kind as 'primary' | 'extra_session' | null) ?? 'primary')
       setLoading(false)
 
       if (device.status === 'approved') {
@@ -61,6 +65,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
 
     setBranch(null)
     setDeviceStatus(null)
+    setDeviceAccessKind(null)
     setLoading(false)
   }, [fingerprint])
 
@@ -71,7 +76,7 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
   }, [refreshStatus])
 
   const selectBranch = useCallback(
-    async (branchId: string, accessPin = ''): Promise<{ error?: string }> => {
+    async (branchId: string): Promise<{ error?: string }> => {
       setLoading(true)
 
       const { data: existing, error: existingError } = await supabase
@@ -96,12 +101,11 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       }
 
       // The server is authoritative. The RPC allows a first device to request
-      // approval normally and allows extra branch sessions only with the admin PIN.
+      // approval normally and creates a one-time PIN request for extra branch sessions.
       const deviceLabel = describeDevice()
       const { data, error } = await supabase.rpc('fn_request_branch_device', {
         p_branch_id: branchId,
         p_device_label: deviceLabel,
-        p_access_pin: accessPin,
       })
 
       if (error) {
@@ -111,14 +115,14 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
       }
 
       setLockedBranchId(branchId)
-      const requestedStatus = Array.isArray(data) ? data[0]?.device_status : null
+      const requestedKind = Array.isArray(data) ? data[0]?.access_kind : null
       void notifyTelegramEntry({
-        type: requestedStatus === 'approved' ? 'device_approved' : 'device_request',
+        type: 'device_request',
         branchId,
         details: {
           device_label: deviceLabel,
           requested_at: new Date().toLocaleString(),
-          access_type: requestedStatus === 'approved' ? 'PIN extra session' : 'Admin approval',
+          access_type: requestedKind === 'extra_session' ? 'Extra session PIN request' : 'Admin approval',
         },
       })
       await refreshStatus(true)
@@ -127,8 +131,33 @@ export function BranchDeviceProvider({ children }: { children: ReactNode }) {
     [fingerprint, refreshStatus]
   )
 
+  const submitAccessPin = useCallback(
+    async (pin: string): Promise<{ error?: string }> => {
+      setLoading(true)
+      const { error } = await supabase.rpc('fn_submit_branch_access_pin', { p_pin: pin })
+
+      if (error) {
+        if (recoverFromInvalidHeaderError(error)) return {}
+        setLoading(false)
+        return { error: error.message }
+      }
+
+      void notifyTelegramEntry({
+        type: 'device_approved',
+        branchId: branch?.id,
+        details: {
+          device_label: describeDevice(),
+          access_type: 'Extra session PIN accepted',
+        },
+      })
+      await refreshStatus(true)
+      return {}
+    },
+    [branch?.id, refreshStatus]
+  )
+
   return (
-    <Ctx.Provider value={{ loading, branch, deviceStatus, fingerprint, selectBranch, refreshStatus }}>
+    <Ctx.Provider value={{ loading, branch, deviceStatus, deviceAccessKind, fingerprint, selectBranch, submitAccessPin, refreshStatus }}>
       {children}
     </Ctx.Provider>
   )

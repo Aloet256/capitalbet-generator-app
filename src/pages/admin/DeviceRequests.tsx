@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, RotateCcw, Smartphone, X } from 'lucide-react'
+import { Check, KeyRound, RotateCcw, Smartphone, X } from 'lucide-react'
 import { useDeviceRequests } from '../../hooks/useDeviceRequests'
 import { useAdminAuth } from '../../context/AdminAuthContext'
 import { Badge } from '../../components/ui/Badge'
@@ -34,7 +34,7 @@ export default function DeviceRequests() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Device Requests</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          One computer can belong to only one branch, and one branch can have only one pending/approved computer. Revoking a device frees that branch for a replacement computer; the revoked computer itself remains tied to its original branch.
+          One computer can belong to only one branch. Extra computers can request an auto-generated PIN for a branch that already has an active computer.
         </p>
       </div>
 
@@ -66,17 +66,29 @@ export default function DeviceRequests() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={<Smartphone size={32} />} title="No device requests here" />
         ) : (
-          <Table headers={['Branch', 'Device', 'Requested', 'Last Seen', 'Status', 'Actions']}>
+          <Table headers={['Branch', 'Device', 'Requested', 'Last Seen', 'Status', 'PIN', 'Actions']}>
             {filtered.map((d) => (
               <tr key={d.id}>
                 <td className="py-2.5 pr-4 whitespace-nowrap font-medium text-slate-800 dark:text-slate-100">{d.branches?.name ?? '—'}</td>
-                <td className="py-2.5 pr-4 whitespace-nowrap text-slate-500">{d.device_label ?? 'Unknown device'}</td>
+                <td className="py-2.5 pr-4 whitespace-nowrap text-slate-500">
+                  <div>{d.device_label ?? 'Unknown device'}</div>
+                  {d.access_kind === 'extra_session' && <div className="text-xs text-amber-600 dark:text-amber-400">Extra session request</div>}
+                </td>
                 <td className="py-2.5 pr-4 whitespace-nowrap text-slate-500">{formatDateTime(d.requested_at)}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap text-slate-500">{formatDateTime(d.last_seen_at)}</td>
                 <td className="py-2.5 pr-4 whitespace-nowrap"><Badge tone={TONE[d.status]}>{d.status}</Badge></td>
                 <td className="py-2.5 pr-4 whitespace-nowrap">
+                  {d.status === 'pending' && d.access_kind === 'extra_session' && d.access_pin ? (
+                    <span className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1 font-mono text-base font-bold tracking-wider text-amber-800 dark:border-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+                      <KeyRound size={14} /> {d.access_pin}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
+                <td className="py-2.5 pr-4 whitespace-nowrap">
                   <div className="flex gap-2">
-                    {d.status === 'pending' && (
+                    {d.status === 'pending' && d.access_kind !== 'extra_session' && (
                       <Button className="!px-3 !py-1.5 text-xs" onClick={() => void run(d, 'approve')} disabled={busyId === d.id}>
                         <Check size={14} /> Approve
                       </Button>

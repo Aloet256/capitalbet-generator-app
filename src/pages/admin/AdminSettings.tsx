@@ -10,7 +10,6 @@ import { Modal } from '../../components/ui/Modal'
 import { Badge } from '../../components/ui/Badge'
 import { runReminderSweepNow } from '../../lib/telegram'
 import { getTelegramRegionStatuses, resetTelegramRegionConfig, saveTelegramRegionConfig } from '../../lib/telegramConfig'
-import { saveBranchAccessPin } from '../../lib/branchAccessPin'
 import { resetSystemData } from '../../lib/systemReset'
 import { supabase } from '../../lib/supabase'
 import { DSTV_PACKAGES } from '../../lib/dstv'
@@ -62,12 +61,6 @@ export default function AdminSettings() {
   const [telegramSaving, setTelegramSaving] = useState(false)
   const [telegramActionError, setTelegramActionError] = useState<string | null>(null)
   const [telegramActionMessage, setTelegramActionMessage] = useState<string | null>(null)
-  const [pinModalOpen, setPinModalOpen] = useState(false)
-  const [branchAccessPin, setBranchAccessPin] = useState('')
-  const [pinPassword, setPinPassword] = useState('')
-  const [pinSaving, setPinSaving] = useState(false)
-  const [pinError, setPinError] = useState<string | null>(null)
-  const [pinMessage, setPinMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!settingsLoading) setForm(settings)
@@ -297,32 +290,6 @@ export default function AdminSettings() {
     await loadTelegramStatuses()
   }
 
-  const closePinModal = () => {
-    if (pinSaving) return
-    setPinModalOpen(false)
-    setBranchAccessPin('')
-    setPinPassword('')
-    setPinError(null)
-  }
-
-  const submitBranchAccessPin = async () => {
-    setPinSaving(true)
-    setPinError(null)
-    setPinMessage(null)
-    const res = await saveBranchAccessPin(branchAccessPin, pinPassword)
-    setPinSaving(false)
-
-    if (res.error) {
-      setPinError(res.error)
-      return
-    }
-
-    setPinModalOpen(false)
-    setBranchAccessPin('')
-    setPinPassword('')
-    setPinMessage('Branch access PIN updated. Share it only with computers that should open an extra branch session.')
-  }
-
   return (
     <div className="space-y-6 max-w-5xl">
       <div>
@@ -396,31 +363,6 @@ export default function AdminSettings() {
             onChange={(e) => setForm({ ...form, branch_delete_password: e.target.value })}
             placeholder="Required before branch users can delete entries"
           />
-
-          <div className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <KeyRound size={16} className="text-brand-600" />
-                  <h4 className="font-semibold text-slate-800 dark:text-slate-100">Branch Extra Session PIN</h4>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">Used when another computer opens a branch that already has an active computer. The saved PIN is hidden.</p>
-                {pinMessage && <p className="text-sm text-emerald-600 mt-2">{pinMessage}</p>}
-              </div>
-              <Button
-                variant="secondary"
-                type="button"
-                className="shrink-0"
-                onClick={() => {
-                  setPinError(null)
-                  setPinMessage(null)
-                  setPinModalOpen(true)
-                }}
-              >
-                <Pencil size={15} /> Set PIN
-              </Button>
-            </div>
-          </div>
 
           <div className="sm:col-span-2 border-t border-slate-200 dark:border-slate-800 pt-4 mt-1">
             <div className="flex items-center gap-2">
@@ -689,45 +631,6 @@ export default function AdminSettings() {
               disabled={telegramSaving || !telegramPassword || (telegramModal?.mode === 'edit' && (!telegramBotToken || !telegramChatId))}
             >
               {telegramSaving ? 'Saving...' : telegramModal?.mode === 'reset' ? 'Reset Configuration' : 'Save Configuration'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={pinModalOpen} onClose={closePinModal} title="Set branch extra session PIN">
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
-            <ShieldCheck size={18} className="mt-0.5 shrink-0 text-brand-600" />
-            <p>
-              This PIN lets another computer open a branch that already has an active computer. The saved PIN is hashed and will not be shown again.
-            </p>
-          </div>
-          <Input
-            label="New Access PIN"
-            type="password"
-            autoFocus
-            minLength={4}
-            autoComplete="new-password"
-            value={branchAccessPin}
-            onChange={(e) => setBranchAccessPin(e.target.value)}
-          />
-          <Input
-            label="Reset Password"
-            type="password"
-            autoComplete="current-password"
-            value={pinPassword}
-            onChange={(e) => setPinPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && branchAccessPin.length >= 4 && pinPassword && !pinSaving) void submitBranchAccessPin()
-            }}
-          />
-          {pinError && <p className="text-sm text-red-500">{pinError}</p>}
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={closePinModal} disabled={pinSaving}>
-              Cancel
-            </Button>
-            <Button onClick={() => void submitBranchAccessPin()} disabled={pinSaving || branchAccessPin.length < 4 || !pinPassword}>
-              {pinSaving ? 'Saving...' : 'Save PIN'}
             </Button>
           </div>
         </div>

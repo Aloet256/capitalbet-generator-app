@@ -6,18 +6,34 @@ import { useBranchDevice } from '../../context/BranchDeviceContext'
 import { Spinner } from '../../components/ui/Spinner'
 import { ThemeToggle } from '../../components/ui/ThemeToggle'
 import { BrandLogo } from '../../components/BrandLogo'
-import { Modal } from '../../components/ui/Modal'
 import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 
 export default function SelectBranch() {
   const { grouped, loading: branchesLoading, error: branchesError } = useBranches()
-  const { branch, deviceStatus, loading, selectBranch, refreshStatus } = useBranchDevice()
+  const { branch, deviceStatus, deviceAccessKind, loading, selectBranch, submitAccessPin, refreshStatus } = useBranchDevice()
   const [query, setQuery] = useState('')
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
-  const [pinBranch, setPinBranch] = useState<{ id: string; name: string } | null>(null)
   const [accessPin, setAccessPin] = useState('')
+  const [pinSubmitting, setPinSubmitting] = useState(false)
+
+  const submitPin = async () => {
+    setPinSubmitting(true)
+    setSelectionError(null)
+    const res = await submitAccessPin(accessPin)
+    if (res.error) setSelectionError(res.error)
+    else setAccessPin('')
+    setPinSubmitting(false)
+  }
+
+  const handleSelect = async (id: string) => {
+    setSubmitting(id)
+    setSelectionError(null)
+    const res = await selectBranch(id)
+    if (res.error) setSelectionError(res.error)
+    setSubmitting(null)
+  }
 
   const filteredGroups = useMemo(() => {
     if (!query.trim()) return grouped
@@ -46,7 +62,35 @@ export default function SelectBranch() {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="card max-w-md w-full text-center">
-          {deviceStatus === 'pending' && (
+          {deviceStatus === 'pending' && deviceAccessKind === 'extra_session' && (
+            <>
+              <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4">
+                <KeyRound size={26} />
+              </div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Extra session PIN required</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+                This computer requested access to <span className="font-semibold">{branch.name}</span>. Ask an admin for the generated PIN, then enter it below.
+              </p>
+              <div className="mt-5 text-left">
+                <Input
+                  label="Generated PIN"
+                  type="password"
+                  value={accessPin}
+                  onChange={(e) => setAccessPin(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && accessPin && !pinSubmitting) {
+                      void submitPin()
+                    }
+                  }}
+                />
+              </div>
+              <Button className="w-full mt-3" disabled={!accessPin || pinSubmitting} onClick={() => void submitPin()}>
+                {pinSubmitting ? 'Checking...' : 'Open Branch'}
+              </Button>
+            </>
+          )}
+
+          {deviceStatus === 'pending' && deviceAccessKind !== 'extra_session' && (
             <>
               <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4">
                 <Clock size={26} />
@@ -104,18 +148,6 @@ export default function SelectBranch() {
     )
   }
 
-  const handleSelect = async (id: string, pin = '') => {
-    setSubmitting(id)
-    setSelectionError(null)
-    const res = await selectBranch(id, pin)
-    if (res.error) setSelectionError(res.error)
-    else {
-      setPinBranch(null)
-      setAccessPin('')
-    }
-    setSubmitting(null)
-  }
-
   return (
     <div className="min-h-screen p-4 lg:p-10">
       <div className="max-w-4xl mx-auto">
@@ -133,7 +165,7 @@ export default function SelectBranch() {
           <ShieldCheck className="text-brand-600 dark:text-brand-400 shrink-0 mt-0.5" size={20} />
           <p className="text-sm text-brand-800 dark:text-brand-300">
             A computer can be assigned to only one branch. Once selected, it cannot switch to another branch. Branches
-            already assigned to another computer require the branch access PIN from an admin.
+            already assigned to another computer create an extra-session request and a one-time PIN for the admin to share.
           </p>
         </div>
 
@@ -167,20 +199,14 @@ export default function SelectBranch() {
                     <button
                       key={b.id}
                       onClick={() => {
-                        if (b.device_locked) {
-                          setSelectionError(null)
-                          setPinBranch({ id: b.id, name: b.name })
-                          setAccessPin('')
-                        } else {
-                          void handleSelect(b.id)
-                        }
+                        void handleSelect(b.id)
                       }}
                       disabled={submitting !== null}
                       className="card text-left hover:border-brand-400 dark:hover:border-brand-600 hover:shadow-md transition-all flex items-center justify-between disabled:opacity-55 disabled:cursor-not-allowed"
                     >
                       <div>
                         <span className="font-medium text-slate-800 dark:text-slate-100">{b.name}</span>
-                        {b.device_locked && <p className="text-xs text-slate-400 mt-1">PIN required for extra session</p>}
+                        {b.device_locked && <p className="text-xs text-slate-400 mt-1">Request extra session PIN</p>}
                       </div>
                       {submitting === b.id ? (
                         <Spinner size={16} />
@@ -200,40 +226,6 @@ export default function SelectBranch() {
           </div>
         )}
       </div>
-      <Modal
-        open={Boolean(pinBranch)}
-        onClose={() => {
-          if (!submitting) {
-            setPinBranch(null)
-            setAccessPin('')
-          }
-        }}
-        title="Branch access PIN"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600 dark:text-slate-300">
-            {pinBranch?.name} already has an active computer. Enter the PIN from an admin to open this branch on this computer.
-          </p>
-          <Input
-            label="Access PIN"
-            type="password"
-            autoFocus
-            value={accessPin}
-            onChange={(e) => setAccessPin(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && pinBranch && accessPin && submitting === null) void handleSelect(pinBranch.id, accessPin)
-            }}
-          />
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setPinBranch(null)} disabled={submitting !== null}>
-              Cancel
-            </Button>
-            <Button onClick={() => pinBranch && void handleSelect(pinBranch.id, accessPin)} disabled={!accessPin || submitting !== null}>
-              {submitting === pinBranch?.id ? 'Checking...' : 'Open Branch'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
